@@ -1,0 +1,6 @@
+QUARTUS_VERSION = "25.1"
+DATE = "11:56:44  March 22, 2026"
+
+# Revisions
+
+PROJECT_REVISION = "fir_parallel_L3_pipelined"

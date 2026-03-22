@@ -1,0 +1,15 @@
+*.rpt
+*.tcl
+work
+*.vcd
+transcript
+vsim.wlf
+*.vstf
+*.cr.mti
+*.mpf
+*.txt
+*.qsys*
+db
+incremental_db
+simulation
+output_files
