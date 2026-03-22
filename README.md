@@ -62,6 +62,21 @@ Advanced_VLSI/
 
 ![Quantization Sweep](matlab/plots/quantization_sweep.png)
 
+#### Quantization Sensitivity and Coefficient Weights
+
+The equiripple design (`firpm`) distributes approximation error evenly across the stopband, but the resulting coefficients span a wide dynamic range — from h(0) = 153 to h(95) = 216,278, a ratio of over 1400:1. Quantization affects large-magnitude coefficients disproportionately: rounding a coefficient near 216,278 by one LSB (at Q = 20, LSB ≈ 1) shifts it by < 0.001 %, whereas rounding h(0) = 153 by one LSB changes it by 0.65 %. These small coefficients shape the transition band edges and stopband nulls, so even modest rounding errors can degrade the attenuation floor.
+
+The Q-sweep confirms this: at Q = 16 (LSB ≈ 15), the quantized stopband attenuation drops to ~72 dB — the small passband-edge coefficients lose precision first, widening the transition band and raising stopband sidelobes. At Q = 18, attenuation recovers to ~78 dB but still falls short. Q = 20 is the first word length to exceed the 80 dB target (80.13 dB), with only 0.48 dB of degradation from the floating-point design (80.61 dB).
+
+Increasing the tap count to 192 (from the minimum 100 specified) was necessary because 100 taps could not achieve 80 dB in the narrow 0.20π–0.23π transition band even at floating point. The higher tap count allows the optimiser to use smaller coefficient weights — the stopband weight dropped from thousands (for 100 taps) to 313.7 for 192 taps — which in turn reduces the dynamic range of the coefficient set and makes quantization less destructive. However, more taps directly increase hardware complexity: 192 taps → 96 multipliers, deeper adder trees, and wider delay lines. This complexity was managed through:
+
+- **Strength reduction:** symmetric pre-adds halve the multiplier count (192 → 96).
+- **Algorithmic decomposition:** polyphase L=2 and L=3 partition the filter into smaller sub-filters (96-tap and 64-tap), reducing per-channel adder tree depth.
+- **Pipelining:** registered adder trees break the critical path from $O(96)$ adder levels to a single 2-input add per stage, dramatically improving Fmax.
+- **MCM with CSD:** replacing DSP multipliers with shift-add networks eliminates expensive hard-macro usage at the cost of additional ALM wiring.
+
+The balance between tap count, quantization word length, and architectural complexity is delicate — fewer taps require higher coefficient precision (larger Q) and higher stopband weight, while more taps relax quantization requirements but scale hardware resources linearly.
+
 ### 3.3 Filter Response
 
 ![Filter Response](matlab/plots/filter_response.png)
@@ -79,6 +94,10 @@ Advanced_VLSI/
 - 16-bit signed input × 21-bit signed coefficients → 37-bit multiply.
 - Worst-case accumulator value: 74,676,844,942 → **38-bit accumulator**.
 - **Overflow is impossible** — no saturation or clipping logic needed.
+
+This is an **architectural overflow prevention** strategy: the accumulator is sized to the worst-case sum-of-absolute-coefficients × max input, guaranteeing that no combination of inputs can ever overflow. This ensures correct convergence for all signal conditions without saturation, clipping, or wrap-around logic, at the cost of wider datapaths (38 bits through the entire adder tree). The 192-tap design exacerbates this — the pad-to-128 adder tree carries 38-bit operands at every node, contributing to the routing congestion and area overhead visible in the synthesis results (Section 5).
+
+An alternative approach would allow **controlled overflow** with narrower accumulators (e.g., 32-bit) and saturating arithmetic or convergent rounding. This would reduce datapath width by 6 bits at every adder-tree node, shrinking ALM usage and routing pressure, but requires additional saturation/clipping logic and careful analysis of signal statistics to ensure the overflow rate is acceptably low for the application.
 
 ## 4. SystemVerilog Implementation
 
@@ -116,8 +135,6 @@ $$y(n) = \sum_{k=0}^{95} h(k) \,\bigl[\,x(n-k) + x(n-(191-k))\,\bigr]$$
 
 This halves the multiplier count to **96 pre-adds + 96 multiplies**. The products are then reduced by a combinational adder tree.
 
-**Simulation verified in ModelSim** (0 errors, 0 warnings):
-
 | Test | Result |
 |---|---|
 | Impulse response | y[1]–y[192] match all 192 coefficients exactly; symmetric pairs confirmed (e.g., y[1]=y[192]=153, y[95]=y[98]=185938). Zeros before and after. |
@@ -143,8 +160,6 @@ After 7 stages: $s_7(0)$ is the final sum. Including the product register (stage
 $$L_{\text{pipe}} = 1 + 7 = 8 \text{ clock cycles}$$
 
 Throughput remains **1 sample/clock** but at significantly higher Fmax.
-
-**Simulation verified in ModelSim** (0 errors, 0 warnings):
 
 | Test | Result |
 |---|---|
@@ -212,8 +227,6 @@ This reduces the multiplier count from $4 \times 96 = 384$ (naive) to $2 \times 
 
 - Interface: accepts two samples per clock (`din_0`, `din_1`), produces two outputs per clock (`dout_0`, `dout_1`).
 - Throughput: **2 samples/clock** (2× fir\_basic).
-
-**Simulation verified in ModelSim** (0 errors, 0 warnings):
 
 | Test | Result |
 |---|---|
@@ -306,8 +319,6 @@ Each output needs **32 multipliers** for $h_1$. Total: $3 \times 32 = 96$.
 - Interface: accepts three samples per clock (`din_0`, `din_1`, `din_2`), produces three outputs per clock (`dout_0`, `dout_1`, `dout_2`).
 - Throughput: **3 samples/clock** (3× fir\_basic).
 
-**Simulation verified in ModelSim** (0 errors, 0 warnings):
-
 | Test | Result |
 |---|---|
 | Impulse response | y[3]–y[194] match all 192 coefficients exactly in 3-way interleaved order (y\_0 = h(0), h(3), …; y\_1 = h(1), h(4), …; y\_2 = h(2), h(5), …). Symmetric pairs confirmed (e.g., y[3]=y[194]=153). Zeros before and after. |
@@ -384,8 +395,6 @@ Total latency from `din_valid` to `dout_valid`: $1\;(\text{product reg}) + 7\;(\
 
 - Interface: identical to `fir_parallel_L3` — accepts three samples per clock (`din_0`, `din_1`, `din_2`), produces three outputs per clock (`dout_0`, `dout_1`, `dout_2`).
 - `dout_valid` is generated via an 8-bit shift register that tracks `din_valid` through the pipeline.
-
-**Simulation verified in ModelSim** (0 errors, 0 warnings):
 
 | Test | Result |
 |---|---|
@@ -495,7 +504,7 @@ These could be further exploited with a graph-based CSE optimiser (e.g., RAG-n o
 
 #### Simulation Verification
 
-**ModelSim verified** (0 errors, 0 warnings) — **bit-identical to `fir_basic`**:
+Output is **bit-identical to `fir_basic`**:
 
 | Test | Result |
 |---|---|
@@ -549,7 +558,7 @@ Combines the **CSD shift-add products** from Section 4.6 with the **pipelined bi
 
 **Pipeline latency:** 8 extra clock cycles (1 product register + 7 tree stages), same as `fir_pipelined`.
 
-**Simulation verified in ModelSim** (0 errors, 0 warnings) — **bit-identical to `fir_mcm` and `fir_basic`**:
+Output is **bit-identical to `fir_mcm` and `fir_basic`**:
 
 | Test | Result |
 |---|---|
@@ -586,8 +595,8 @@ The non-pipelined designs (`fir_basic`, `fir_parallel_L2`, `fir_parallel_L3`) us
 | Direct-form | 1,125 | 3,694 | 96 | 43.6 | 43.6 |
 | Pipelined | 3,032 | 9,137 | 96 | 58.5 | 58.5 |
 | L=2 parallel | 1,556 | 3,620 | 192 | 41.4 | 82.8 |
-| L=3 parallel | — | — | 288 | — | — |
-| L=3 parallel + pipeline | — | — | 288 | — | — |
+| L=3 parallel | 2,305 | 3,694 | 288 | 41.8 | 125.4 |
+| L=3 parallel + pipeline | 7,581 | 19,899 | 288 | 58.5 | 175.5 |
 | MCM direct-form | 5,042 | 3,493 | 0 | 37.3 | 37.3 |
 | MCM pipelined | 5,639 | 10,496 | 0 | 58.5 | 58.5 |
 
@@ -598,6 +607,8 @@ The non-pipelined designs (`fir_basic`, `fir_parallel_L2`, `fir_parallel_L3`) us
 - **MCM direct-form:** slack = −16.840 ns → $F_{\max} = 1000 / 26.840 = 37.3$ MHz
 - **MCM pipelined:** slack = −7.106 ns → $F_{\max} = 1000 / 17.106 = 58.5$ MHz
 - **L=2 parallel:** slack = −14.164 ns → $F_{\max} = 1000 / 24.164 = 41.4$ MHz, throughput = 2 × 41.4 = 82.8 Msps
+- **L=3 parallel:** slack = −13.918 ns → $F_{\max} = 1000 / 23.918 = 41.8$ MHz, throughput = 3 × 41.8 = 125.4 Msps
+- **L=3 parallel + pipeline:** slack = −7.087 ns → $F_{\max} = 1000 / 17.087 = 58.5$ MHz, throughput = 3 × 58.5 = 175.5 Msps
 
 ### 5.4 Interconnect Usage
 
@@ -608,12 +619,16 @@ Routing resource utilization from the Quartus Fitter, showing average and peak i
 | Direct-form | 1.9% / 1.6% / 2.7% | 17.6% / 16.6% / 24.5% | 8,904 (1%) | 3.80 | 3,752 |
 | Pipelined | 2.1% / 1.9% / 2.7% | 15.1% / 13.3% / 20.4% | 15,271 (2%) | 3.06 | 3,715 |
 | L=2 parallel | 5.8% / 4.7% / 9.0% | 20.9% / 18.0% / 38.5% | 15,712 (2%) | 4.15 | 3,736 |
+| L=3 parallel | 12.7% / 10.1% / 20.9% | 39.9% / 34.6% / 57.8% | 22,645 (3%) | 4.33 | 3,982 |
+| L=3 parallel + pipeline | 8.8% / 7.7% / 12.4% | 19.6% / 17.9% / 26.6% | 41,657 (6%) | 2.98 | 20,331 |
 | MCM direct-form | 2.2% / 2.1% / 2.4% | 30.8% / 30.0% / 33.6% | 19,315 (3%) | 3.14 | 3,455 |
 | MCM pipelined | 2.1% / 2.1% / 2.0% | 17.2% / 17.0% / 18.0% | 21,223 (3%) | 2.98 | 3,285 |
 
 **Key observations:**
-- **L=2 parallel** has the highest average interconnect (5.8%) and vertical peak (38.5%) — 2× the data buses means 2× the wiring between DSP columns and the adder tree.
-- **MCM direct-form** has the highest peak congestion (30.8%) despite low average — the CSD shift-add chains create localized routing hotspots around the large-coefficient products.
+- **L=3 parallel** has the highest interconnect utilisation across the board — 12.7% average (2.2× L=2) and 57.8% vertical peak — because 3× the data buses and 288 DSP blocks saturate the vertical routing channels between DSP columns.
+- **L=2 parallel** follows at 5.8% average and 38.5% vertical peak — 2× the data buses means 2× the wiring between DSP columns and the adder tree.
+- **L=3 parallel + pipeline** dramatically reduces peak congestion from 57.8% → 26.6% vertical and average from 12.7% → 8.8% vs L=3 non-pipelined. The pipeline registers allow the fitter to spread logic across more of the device, though the 20K registers drive the highest block interconnect (6%) and max fan-out (20,331 — the clock/reset net) of any design.
+- **MCM direct-form** has high peak congestion (30.8%) despite low average — the CSD shift-add chains create localized routing hotspots around the large-coefficient products.
 - **MCM pipelined** reduces peak congestion from 30.8% → 17.2% vs MCM direct-form — the pipeline registers break long combinational paths and allow the fitter to spread logic across more of the device.
 - **Pipelined** (DSP) has the lowest peak (15.1%) because the DSP blocks have dedicated routing.
 
@@ -626,19 +641,90 @@ Logic (CELL) vs routing (IC) delay on the worst-case setup path, extracted via `
 | Direct-form | 41.9 | 20.2 | 21.7 | 48% | 52% |
 | Pipelined | 12.0 | 2.1 | 9.9 | 17% | 83% |
 | L=2 parallel | 45.6 | 20.2 | 25.4 | 44% | 56% |
+| L=3 parallel | 23.2 | 15.2 | 8.0 | 66% | 34% |
+| L=3 parallel + pipeline | 8.1 | 6.8 | 1.3 | 84% | 16% |
 | MCM direct-form | 45.8 | 20.2 | 25.6 | 44% | 56% |
 | MCM pipelined | 12.0 | 2.1 | 9.9 | 17% | 83% |
 
 **Key observations:**
-- **Non-pipelined designs** are roughly 50/50 logic-vs-routing: the combinational adder trees are deep enough that both cell delays (carry chains, LUTs) and interconnect delays contribute equally.
-- **Pipelined designs** are 83% routing-dominated: with only one adder-tree level per pipeline stage, the CELL delay shrinks to ~2 ns and the critical path is dominated by IC (wire) delay between pipeline stages. This means the pipelined designs are **routing-limited** — further Fmax improvement would require physical placement optimization, not logic restructuring.
+- **Non-pipelined DSP designs** (direct-form, L=2) are roughly 50/50 logic-vs-routing: the combinational adder trees are deep enough that both cell delays (carry chains, LUTs) and interconnect delays contribute equally.
+- **L=3 parallel** is the outlier at **66% logic / 34% routing** — the critical path traverses DSP chain connections (Mult30→Mult33) adding 8.5 ns of CELL delay before the adder tree even begins. The shorter total path (23.2 ns vs 45.6 ns for L=2) is because L=3 sub-filters are only 64 taps (vs 96 for L=2), producing a shallower adder tree.
+- **L=3 parallel + pipeline** is **84% logic-dominated** (6.8 ns CELL / 1.3 ns IC) — the pipeline eliminates the adder tree from the critical path entirely, leaving the DSP multiply (6.1 ns) as the bottleneck. The internal register-to-register paths all meet 100 MHz; the reported 58.5 MHz Fmax is I/O-constrained.
+- **Pipelined designs** (DSP basic, MCM) are 83% routing-dominated: with only one adder-tree level per pipeline stage, the CELL delay shrinks to ~2 ns and the critical path is dominated by IC (wire) delay between pipeline stages. This means the pipelined designs are **routing-limited** — further Fmax improvement would require physical placement optimization, not logic restructuring.
 - **MCM vs DSP** direct-form: nearly identical logic delay (20.2 ns) despite completely different multiply structures (CSD shift-add vs DSP block). The extra 3.9 ns of routing delay in MCM (25.6 vs 21.7 ns) accounts for the CSD fan-out wiring and explains the 37.3 vs 43.6 MHz Fmax gap.
 
-## 6. Open-Ended Final Design Project
+### 5.6 Power Estimation
+
+Estimated using Quartus Prime PowerPlay Analyzer with vectorless estimation (12.5 % default toggle rate, no VCD). Static power is dominated by the Cyclone V device leakage (~519 mW) and is nearly constant across all designs; **dynamic power** is the meaningful comparison metric.
+
+| Architecture | Dynamic (mW) | Static (mW) | I/O (mW) | Total (mW) |
+|---|---|---|---|---|
+| Direct-form | 38.4 | 519.1 | 6.7 | 564.2 |
+| Pipelined | 101.2 | 519.9 | 6.7 | 627.8 |
+| L=2 parallel | 72.9 | 519.5 | 6.7 | 599.1 |
+| L=3 parallel | 110.4 | 520.0 | 6.7 | 637.1 |
+| L=3 parallel + pipeline | 340.8 | 523.0 | 6.7 | 870.5 |
+| MCM direct-form | 17.4 | 518.8 | 6.7 | 542.9 |
+| MCM pipelined | 30.0 | 519.0 | 6.7 | 555.6 |
+
+**Key observations:**
+- **MCM designs use 2–6× less dynamic power** than their DSP counterparts (17.4 vs 38.4 mW direct-form; 30.0 vs 101.2 mW pipelined). The CSD shift-add networks are combinational wiring with no clock-edge switching inside DSP blocks, reducing toggle-driven dynamic dissipation.
+- **L=3 parallel + pipeline is the most power-hungry** at 340.8 mW dynamic — 19,899 registers clocking at 100 MHz across three channels of 7-stage adder trees. This is the price of maximum throughput (175.5 Msps).
+- **Pipelining roughly doubles dynamic power** vs non-pipelined variants (38.4 → 101.2 mW for DSP; 17.4 → 30.0 mW for MCM) due to the additional pipeline registers toggling every clock cycle.
+- **Power estimation confidence is low** (vectorless, no VCD) — actual power depends on input signal statistics. These numbers represent a first-order comparison for architecture ranking, not absolute power guarantees.
+
+## 6. Further Analysis and Conclusion
+
+### 6.1 Architecture Comparison
+
+Normalising hardware results to a common throughput-efficiency metric reveals clear trade-offs:
+
+| Architecture | Fmax (MHz) | Throughput (Msps) | ALMs | DSPs | Dynamic Power (mW) | Throughput/ALM (Ksps/ALM) | Throughput/mW (Msps/mW) |
+|---|---|---|---|---|---|---|---|
+| Direct-form | 43.6 | 43.6 | 1,125 | 96 | 38.4 | 38.8 | 1.14 |
+| Pipelined | 58.5 | 58.5 | 3,032 | 96 | 101.2 | 19.3 | 0.58 |
+| L=2 parallel | 41.4 | 82.8 | 1,556 | 192 | 72.9 | 53.2 | 1.14 |
+| L=3 parallel | 41.8 | 125.4 | 2,305 | 288 | 110.4 | 54.4 | 1.14 |
+| L=3 parallel + pipeline | 58.5 | 175.5 | 7,581 | 288 | 340.8 | 23.2 | 0.51 |
+| MCM direct-form | 37.3 | 37.3 | 5,042 | 0 | 17.4 | 7.4 | 2.14 |
+| MCM pipelined | 58.5 | 58.5 | 5,639 | 0 | 30.0 | 10.4 | 1.95 |
+
+**Key findings:**
+
+1. **Pipelining is critical for large filters.** Every pipelined variant achieves 58.5 MHz regardless of datapath structure (DSP, MCM, or parallel). The non-pipelined designs are capped at 37–44 MHz by the combinational adder tree depth. For a 192-tap filter with 96 products, the 7-level adder tree dominates the critical path — pipelining is not optional, it is essential.
+
+2. **Parallel processing scales throughput linearly.** L=2 delivers 2× and L=3 delivers 3× the throughput of the base architecture at the same Fmax. The non-pipelined parallel designs (L=2, L=3) achieve the highest throughput-per-ALM ratios (53–54 Ksps/ALM) because they scale throughput without the register overhead of pipelining.
+
+3. **Combined L=3 + pipelining yields maximum throughput** at 175.5 Msps — 4× the direct-form — but at the highest cost in every metric: 7,581 ALMs, 288 DSPs, 340.8 mW dynamic power. This is the right choice when raw throughput is the design objective and device resources are available.
+
+4. **MCM (CSD) trades DSP blocks for ALMs and power.** The MCM designs use zero DSPs while consuming 4.5× more ALMs. However, they achieve the best **power efficiency** (2.14 Msps/mW for MCM direct-form vs 1.14 for DSP direct-form) because shift-add networks have lower switching activity than clocked DSP blocks. The MCM approach is most valuable when DSP blocks are scarce (smaller device, or DSPs reserved for other IP) and the filter coefficients are fixed at design time.
+
+5. **The CSE exploration (Section 4.6) demonstrates further optimisation potential.** The 357 shift-add operations identified in the CSD decomposition contain significant redundancy — the top sub-expression pattern `(x << a) - (x << a+2)` appears 97 times across the 96 coefficients. A graph-based CSE optimiser (RAG-n or Hcub) could compute these shared intermediates once and fan them out, potentially halving the 357 operations at the cost of additional wiring complexity and higher routing congestion.
+
+### 6.2 Hybrid MCM-DSP Architecture (Future Work)
+
+An unexplored architecture combines MCM and DSP resources: small-magnitude coefficients (low NZD count, e.g., h(6) = 136 = `+2^3 + 2^7`, 2 ops) are implemented as CSD shift-add, while large-magnitude coefficients (high NZD, e.g., h(95) = 216,278, 9 NZD → 8 ops) are mapped to DSP blocks. This hybrid approach would:
+
+- **Reduce ALM usage** vs pure MCM by offloading the most complex shift-add chains (which consume the most LUTs and create the deepest combinational paths) to DSPs.
+- **Reduce DSP usage** vs pure DSP by keeping simple coefficients in fabric — the ~30 coefficients with NZD ≤ 3 would each require only 1–2 adders, far cheaper than a dedicated DSP block.
+- **Redefine the critical path** — the longest CSD chains (8 cascaded add/subs for 9-NZD coefficients) currently set the MCM Fmax ceiling at 37.3 MHz. Moving these to DSPs would shorten the critical path to the next-longest CSD chain, potentially recovering most of the 14 % Fmax gap without full pipelining.
+
+The partitioning threshold (how many NZD before a coefficient "deserves" a DSP) is an optimisation problem trading ALMs, DSP blocks, power, and timing closure — a natural extension of the design-space exploration in this project.
+
+### 6.3 Conclusion
+
+This project implemented a 192-tap equiripple lowpass FIR filter across seven SystemVerilog architectures — from a basic direct-form to combined L=3 parallel + pipelined — and synthesised all seven on a Cyclone V FPGA. The main takeaways:
+
+- **Quantization is manageable but non-trivial.** The Q=20 sweet spot was found empirically; lower word lengths disproportionately damage the small transition-band coefficients that shape the stopband floor. The 192-tap design relaxes coefficient weights relative to a 100-tap design, making quantization less destructive at the cost of more hardware.
+- **Pipelining is non-negotiable for large combinational datapaths.** All three pipelined designs converge to the same 58.5 MHz Fmax — the adder tree is no longer the bottleneck; I/O and routing delays are. Without pipelining, the 96-product combinational adder tree limits Fmax to ~42 MHz.
+- **Parallel polyphase decomposition is the most area-efficient way to scale throughput.** L=3 non-pipelined achieves 125.4 Msps at only 2,305 ALMs — the highest throughput-per-ALM of any design — by processing three samples per clock without pipeline register overhead.
+- **MCM with CSD is a viable DSP-free alternative** for fixed-coefficient filters, offering the lowest dynamic power at the cost of higher ALM usage and modest Fmax degradation. The CSE analysis shows substantial room for further optimisation through sub-expression sharing.
+
+## 7. Open-Ended Final Design Project
 
 **Selected topic:** Viterbi decoder — high-performance VLSI architecture and RTL implementation.
 
-## 7. References
+## 8. References
 
 - Course Project Specification: `Supporting_Documentation/Project.pdf`
 - MATLAB `firpm` documentation
