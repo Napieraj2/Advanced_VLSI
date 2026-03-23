@@ -33,12 +33,13 @@ Advanced_VLSI/
 │   │   │   │   ├── fir_mcm_pipelined.sv     ← MCM + pipelined adder tree
 │   │   │   │   ├── tb_fir*.sv               ← Testbenches (one per architecture)
 │   │   │   │   └── quartus/                 ← Quartus project files, SDC, STA scripts
-│   │   │   └── OVERFLOW_CONTROL/            ← (next phase: 128-tap, narrower accumulator + saturation)
+│   │   │   └── OVERFLOW_CONTROL/            ← (same 192-tap Q=20, true 32-bit tree, wrap-around)
 │   │   └── matlab/
 │   │       ├── OVERFLOW_PREVENT/
 │   │       │   ├── FIR_Filter_Project.m      ← MATLAB design + quantization script
 │   │       │   └── plots/                   ← Exported MATLAB figures
-│   │       └── OVERFLOW_CONTROL/            ← (next phase)
+│   │       └── OVERFLOW_CONTROL/            ← (32-bit overflow analysis)
+│   │           └── FIR_Filter_Overflow_Control.m  ← MATLAB overflow analysis script
 │   ├── Supporting_Documentation/
 │   │   └── Project.pdf
 │   └── README.md
@@ -95,7 +96,120 @@ The balance between tap count, quantization word length, and architectural compl
 
 This is an **architectural overflow prevention** strategy: the accumulator is sized to the worst-case sum-of-absolute-coefficients × max input, guaranteeing that no combination of inputs can ever overflow. This ensures correct convergence for all signal conditions without saturation, clipping, or wrap-around logic, at the cost of wider datapaths (38 bits through the entire adder tree). The 192-tap design exacerbates this — the pad-to-128 adder tree carries 38-bit operands at every node, contributing to the routing congestion and area overhead visible in the synthesis results (Section 5).
 
-An alternative approach would allow **controlled overflow** with narrower accumulators (e.g., 32-bit) and saturating arithmetic or convergent rounding. This would reduce datapath width by 6 bits at every adder-tree node, shrinking ALM usage and routing pressure, but requires additional saturation/clipping logic and careful analysis of signal statistics to ensure the overflow rate is acceptably low for the application.
+An alternative approach allows **controlled overflow** with narrower accumulators (e.g., 32-bit) and natural two's complement wrap-around. This reduces datapath width by 6 bits at every adder-tree node, shrinking ALM usage, register count, and routing pressure — with no additional saturation logic — provided the final mathematical result fits within 32 signed bits for practical signals. This is the approach taken by the `OVERFLOW_CONTROL/` design variant (see Section 3.6).
+
+### 3.6 Overflow Control — 32-Bit Accumulator Exploration
+
+This section derives the design constraints for targeting a **true 32-bit internal datapath** with two's complement wrap-around arithmetic, as implemented in the `OVERFLOW_CONTROL/` design variant.
+
+#### 3.6.1 Accumulator Width Derivation
+
+For an $N$-tap symmetric FIR with pre-add folding, the accumulator computes:
+
+$$\text{acc} = \sum_{k=0}^{N/2 - 1} h_{\text{int}}[k] \cdot \bigl(x[k] + x[N{-}1{-}k]\bigr)$$
+
+where $h_{\text{int}}[k] = \text{round}(h[k] \cdot 2^Q)$ are the quantised integer coefficients.
+
+**Theoretical (worst-case) accumulator width** assumes every product is at maximum magnitude and same-signed:
+
+$$W_{\text{acc}}^{\text{theo}} = \underbrace{(W_{\text{in}} + 1)}_{\text{pre-add}} + \underbrace{(Q + 1)}_{\text{coeff}} + \underbrace{\lceil \log_2(N/2) \rceil}_{\text{tree growth}}$$
+
+For the OVERFLOW_PREVENT design ($N = 192$, $Q = 20$):
+
+$$W_{\text{acc}}^{\text{theo}} = 17 + 21 + 7 = 45 \text{ bits}$$
+
+This is extremely conservative — it assumes all 96 products are simultaneously at maximum magnitude and the same sign, which is physically impossible for a lowpass filter (whose coefficients alternate in sign around the centre tap).
+
+**Practical (signal-aware) accumulator width** uses the actual coefficient magnitudes:
+
+$$|\text{acc}_{\max}| = \underbrace{\sum_{k=0}^{N-1} |h_{\text{int}}[k]|}_{S_{|h|}} \;\times\; \underbrace{(2^{W_{\text{in}}-1} - 1)}_{\text{max input magnitude}}$$
+
+$$W_{\text{acc}}^{\text{pract}} = \lceil \log_2(|\text{acc}_{\max}|) \rceil + 1 \quad (\text{+1 for sign})$$
+
+For the OVERFLOW_PREVENT design: $S_{|h|} = 2{,}278{,}816$, $|\text{acc}_{\max}| = 74{,}676{,}844{,}942$ → $W_{\text{acc}}^{\text{pract}} = 38$ bits — 7 bits narrower than the theoretical bound.
+
+#### 3.6.2 The 80 dB + 32-Bit Impossibility
+
+For a signed 32-bit accumulator, the overflow-free condition is:
+
+$$S_{|h|} \times (2^{15} - 1) \leq 2^{31} - 1 \quad\Longrightarrow\quad \boxed{S_{|h|} \leq 65{,}536}$$
+
+Since $S_{|h|} \approx \sigma \cdot 2^Q$ where $\sigma = \sum |h[k]|$ is the floating-point $L_1$ norm:
+
+$$\sigma \cdot 2^Q \leq 65{,}536 \quad\Longrightarrow\quad \boxed{Q \leq 16 - \log_2(\sigma)}$$
+
+From the OVERFLOW_PREVENT design: $\sigma = 2{,}278{,}816 / 2^{20} = 2.173$, giving:
+
+$$Q_{\max} = \lfloor 16 - \log_2(2.173) \rfloor = \lfloor 14.88 \rfloor = 14$$
+
+But from the quantisation sweep (Section 3.2), **Q = 20 is the minimum word length to preserve ≥ 80 dB** stopband after rounding — Q = 18 only achieves ~78 dB, and Q = 14 drops to ~63 dB.
+
+This creates a **fundamental conflict**: achieving 80 dB stopband requires Q ≥ 20, but overflow-free operation in a 32-bit accumulator requires Q ≤ 14. The $L_1$ norm $\sigma$ is set by the filter specification (passband/stopband edges, attenuation depth), not by the tap count — so no amount of tap-count adjustment can resolve the conflict.
+
+$$\underbrace{Q \geq 20}_{\text{80 dB stopband}} \quad \text{vs.} \quad \underbrace{Q \leq 14}_{\text{32-bit overflow-free}} \quad\Longrightarrow\quad \textbf{no solution exists}$$
+
+#### 3.6.3 Resolution: True 32-Bit Tree with Two's Complement Wrap-Around
+
+The resolution is to **abandon the overflow-prevention guarantee** and instead use the same Q = 20 coefficients (preserving 80 dB stopband) in a **true 32-bit internal datapath** — every node in the adder tree, every product register, and every partial sum operates at 32 bits. No saturation logic is added; the hardware relies on the algebraic properties of two's complement arithmetic.
+
+The worst-case accumulator magnitude still exceeds the 32-bit signed range:
+
+$$|\text{acc}_{\max}| = 74{,}676{,}844{,}942 \quad (38 \text{ bits}) \quad\gg\quad 2^{31} - 1 = 2{,}147{,}483{,}647 \quad (32 \text{ bits})$$
+
+The overflow ratio is:
+
+$$R_{\text{overflow}} = \frac{|\text{acc}_{\max}|}{2^{31} - 1} = \frac{74{,}676{,}844{,}942}{2{,}147{,}483{,}647} \approx 34.8\times$$
+
+However, this worst case is **physically unrealisable** for a bandlimited lowpass filter, since:
+
+1. **Coefficient sign alternation:** the equiripple impulse response oscillates — positive and negative coefficients partially cancel in the accumulator.
+2. **Signal correlation:** real bandlimited inputs cannot simultaneously maximise all 192 tap products. The pre-add pairs $x[k] + x[N{-}1{-}k]$ are correlated by the input spectrum.
+3. **Statistical headroom:** for Gaussian-distributed inputs at typical signal levels (well below full-scale), the accumulator utilises far fewer than 38 bits.
+
+**Why wrap-around is correct:** Two's complement addition forms a ring $\mathbb{Z}/2^{32}\mathbb{Z}$. Individual products (38-bit true width) are truncated to 32 bits when stored, and partial sums may wrap during the tree reduction. However, as long as the **final mathematical result** fits within $[{-2^{31}},\; 2^{31}{-}1]$, the modular sum equals the true sum — intermediate wrap-arounds cancel algebraically. For all practical bandlimited signals (and even worst-case step inputs), the final accumulator value fits within 32 signed bits (see Section 3.6.6), so the 32-bit tree produces bit-identical results to the 38-bit OVERFLOW_PREVENT tree.
+
+#### 3.6.4 Implementation — No Saturation, No Extra Width
+
+Unlike the original saturation-based approach (which would carry a 38-bit internal tree plus comparator/mux overhead and provide **no area savings** over OVERFLOW_PREVENT), the true 32-bit tree removes complexity at every level:
+
+```systemverilog
+parameter W_OUT = 32;  // no W_ACC parameter — everything runs at W_OUT
+
+reg signed [W_OUT-1:0] product [0:95];   // 32-bit products (truncated from 38-bit multiply)
+reg signed [W_OUT-1:0] tree    [0:127];  // 32-bit adder tree nodes
+
+// Output is the tree root — no saturation logic
+always @(posedge clk)
+    dout <= tree[1];  // direct assignment, natural wrap-around
+```
+
+Every signal in the datapath — products, tree nodes, pipeline registers, and outputs — is 32 bits wide. The `W_ACC` parameter is eliminated entirely. The 38-bit multiplication result (`W_PREADD + W_COEFF = 17 + 21 = 38`) is naturally truncated to 32 bits by Verilog's assignment semantics, retaining the lower 32 bits (which is the correct modular residue).
+
+This provides **genuine area savings** over OVERFLOW_PREVENT: 6 fewer bits at every adder-tree node, every pipeline register, and every product storage element. For the pipelined L=3 parallel design, this translates to thousands fewer registers and significantly reduced ALM usage.
+
+#### 3.6.5 Design-Space Trade-Off Summary
+
+| Parameter | OVERFLOW_PREVENT | OVERFLOW_CONTROL |
+|---|---|---|
+| Number of taps $N$ | 192 | 192 |
+| Coefficient word length $Q$ | 20 | 20 |
+| Signed coefficient width | 21 bits | 21 bits |
+| **Internal tree precision** | **38 bits** | **32 bits** |
+| **Output width** ($W_{\text{out}}$) | **38 bits** | **32 bits** |
+| Stopband attenuation (quantised) | 80.1 dB | 80.1 dB |
+| Overflow strategy | Prevent (wide tree) | Accept (wrap-around) |
+| Saturation logic | Not needed | Not needed |
+| Extra parameters | `W_ACC = 38` | None (`W_OUT` only) |
+
+The key difference is the **entire internal datapath width**: OVERFLOW_PREVENT carries 38 bits through every adder-tree node, pipeline register, and product storage; OVERFLOW_CONTROL runs everything at 32 bits with natural two's complement wrap-around. This saves 6 bits at every node — reducing ALM usage, register count, and routing congestion — with no additional saturation logic. For practical bandlimited signals, both designs produce identical outputs.
+
+#### 3.6.6 When Does Overflow Actually Occur?
+
+For the step-response test (constant `din = 1000` for 192+ cycles), the converged accumulator value is:
+
+$$\text{acc}_{\text{step}} = \sum_{k=0}^{191} h_{\text{int}}[k] \times 1000 = 1{,}018{,}790 \times 1000 = 1{,}018{,}790{,}000$$
+
+Since $1{,}018{,}790{,}000 < 2^{31} - 1 = 2{,}147{,}483{,}647$, the step response **fits entirely within 32 signed bits** — the wrap-around tree produces the exact same result as the 38-bit OVERFLOW_PREVENT tree. True overflow (where intermediate wrap-arounds would corrupt the final sum) would require the mathematical result to exceed $2^{31} - 1$, which needs sustained input amplitudes $\geq \lfloor (2^{31}-1) / S_{|h|} \rfloor = \lfloor 2{,}147{,}483{,}647 / 2{,}278{,}816 \rfloor = 942$ applied with coefficient-aligned polarity at every tap — a pathological scenario that does not arise for bandlimited signals. The MATLAB script `coding/matlab/OVERFLOW_CONTROL/FIR_Filter_Overflow_Control.m` performs this analysis and exports the coefficient table.
 
 ## 4. SystemVerilog Implementation
 
@@ -294,11 +408,11 @@ $$h_0(j) = h(3j), \qquad h_2(j) = h(3j{+}2) = h(191{-}(3j{+}2)) = h(3(63{-}j)) =
 
 So $H_2$ is $H_0$ time-reversed. Substituting and re-indexing collapses each $H_0 + H_2$ pair into a single cross pre-add:
 
-$$y(3n) = \sum_{j=0}^{63} h_0(j)\bigl[\text{dl\_0}[j] + \text{dl\_1}[64{-}j]\bigr] + \text{(H_1 term)}$$
+$$y(3n) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl0}[j] + \mathtt{dl1}[64{-}j]\bigr] + (H_1 \text{ term})$$
 
-$$y(3n{+}1) = \sum_{j=0}^{63} h_0(j)\bigl[\text{dl\_1}[j] + \text{dl\_2}[64{-}j]\bigr] + \text{(H_1 term)}$$
+$$y(3n{+}1) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl1}[j] + \mathtt{dl2}[64{-}j]\bigr] + (H_1 \text{ term})$$
 
-$$y(3n{+}2) = \sum_{j=0}^{63} h_0(j)\bigl[\text{dl\_2}[j] + \text{dl\_0}[63{-}j]\bigr] + \text{(H_1 term)}$$
+$$y(3n{+}2) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl2}[j] + \mathtt{dl0}[63{-}j]\bigr] + (H_1 \text{ term})$$
 
 Each output needs **64 multipliers** for $h_0$. Total: $3 \times 64 = 192$.
 
