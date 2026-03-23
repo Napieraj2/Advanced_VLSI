@@ -1,15 +1,25 @@
+# ModelSim / QuestaSim
 *.rpt
-*.tcl
-work
+work/
 *.vcd
 transcript
 vsim.wlf
 *.vstf
 *.cr.mti
 *.mpf
-*.txt
+
+# Quartus build artifacts
 *.qsys*
-db
-incremental_db
-simulation
-output_files
+.qsys_edit/
+db/
+incremental_db/
+simulation/
+output_files/
+*.txt
+
+# Quartus TCL scripts (generated)
+*.tcl
+
+# MATLAB
+*.asv
+*.fig
