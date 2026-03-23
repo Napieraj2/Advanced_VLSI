@@ -101,7 +101,7 @@ module fir_basic #(
 
     // ----- Pre-add symmetric pairs and multiply (combinational) -----
     reg signed [W_PREADD-1:0] preadd [0:HALF-1];
-    reg signed [W_MULT-1:0]   product [0:HALF-1];
+    reg signed [W_OUT-1:0]    product [0:HALF-1];
 
     always @(*) begin
         for (i = 0; i < HALF; i = i + 1) begin

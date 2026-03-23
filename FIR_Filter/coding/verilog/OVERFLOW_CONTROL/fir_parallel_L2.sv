@@ -107,8 +107,8 @@ module fir_parallel_L2 #(
     // ----- Cross pre-add + multiply -----
     reg signed [W_PREADD-1:0] pa_y0 [0:HALF_TAPS-1];
     reg signed [W_PREADD-1:0] pa_y1 [0:HALF_TAPS-1];
-    reg signed [W_MULT-1:0]   prod_y0 [0:HALF_TAPS-1];
-    reg signed [W_MULT-1:0]   prod_y1 [0:HALF_TAPS-1];
+    reg signed [W_OUT-1:0]    prod_y0 [0:HALF_TAPS-1];
+    reg signed [W_OUT-1:0]    prod_y1 [0:HALF_TAPS-1];
 
     always @(*) begin
         for (i = 0; i < HALF_TAPS; i = i + 1) begin

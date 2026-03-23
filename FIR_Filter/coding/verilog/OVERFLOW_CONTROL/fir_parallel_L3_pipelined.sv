@@ -144,12 +144,12 @@ module fir_parallel_L3_pipelined #(
     reg signed [W_PREADD-1:0] spa_y1 [0:HALF_H1-1];
     reg signed [W_PREADD-1:0] spa_y2 [0:HALF_H1-1];
 
-    reg signed [W_MULT-1:0] prod_h0_y0 [0:SUB_LEN-1];
-    reg signed [W_MULT-1:0] prod_h0_y1 [0:SUB_LEN-1];
-    reg signed [W_MULT-1:0] prod_h0_y2 [0:SUB_LEN-1];
-    reg signed [W_MULT-1:0] prod_h1_y0 [0:HALF_H1-1];
-    reg signed [W_MULT-1:0] prod_h1_y1 [0:HALF_H1-1];
-    reg signed [W_MULT-1:0] prod_h1_y2 [0:HALF_H1-1];
+    reg signed [W_OUT-1:0]  prod_h0_y0 [0:SUB_LEN-1];
+    reg signed [W_OUT-1:0]  prod_h0_y1 [0:SUB_LEN-1];
+    reg signed [W_OUT-1:0]  prod_h0_y2 [0:SUB_LEN-1];
+    reg signed [W_OUT-1:0]  prod_h1_y0 [0:HALF_H1-1];
+    reg signed [W_OUT-1:0]  prod_h1_y1 [0:HALF_H1-1];
+    reg signed [W_OUT-1:0]  prod_h1_y2 [0:HALF_H1-1];
 
     always @(*) begin
         for (i = 0; i < SUB_LEN; i = i + 1) begin

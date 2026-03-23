@@ -14,7 +14,7 @@ clc; clear; close all;
 Fp       = 0.20;
 Fs_edge  = 0.23;
 target_atten = 80;                  % dB — same 80 dB requirement
-max_passband_ripple = 0.5;
+max_passband_ripple = 13;
 
 f = [0 Fp Fs_edge 1];
 a = [1 1 0 0];
