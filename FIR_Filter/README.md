@@ -149,12 +149,14 @@ $$y(n) = \sum_{k=0}^{95} h(k) \,\bigl[\,x(n-k) + x(n-(191-k))\,\bigr]$$
 (*Equation 2*)
 
 ### 4.2 Pipelined FIR (`fir_pipelined.v`)
-The front-end structure is unchanged from `fir_basic`. The only modification is in the reduction path for the 96 products. In `fir_basic`, all 96 products are reduced through a single combinational adder tree that is 7 levels deep and padded to 128 entries. This approach works, but it requires the entire tree to settle within a single clock period. The pipelined version [3] instead inserts a register after every tree level, so each stage contains only a single two-input addition, as shown in *Equations 3* and *4*. Here, $p(i)$ denotes the padded product vector: $p(i)=\mathtt{product}(i)$ for $0 \le i < 96$ and $p(i)=0$ for $96 \le i < 128$. After 7 adder stages, \(s_7(0)\) produces the final sum. Including the product register, this adds a total latency of 8 cycles. In exchange, timing closure becomes much easier while throughput remains at 1 sample per clock. Functionally, this architecture does not change the filter output. The impulse and step responses are bit-identical to those of `fir_basic`; they simply appear later in time. Accordingly, `dout_valid` shifts from 85 ns to 165 ns, while the coefficient sequence itself remains unchanged.
+The front-end structure is unchanged from `fir_basic`. The only modification is in the reduction path for the 96 products. In `fir_basic`, all 96 products are reduced through a single combinational adder tree that is 7 levels deep and padded to 128 entries. This approach works, but it requires the entire tree to settle within a single clock period. The pipelined version [3] instead inserts a register after every tree level, so each stage contains only a single two-input addition, as shown in *Equations 3* and *4*. After 7 adder stages, \(s_7(0)\) produces the final sum. Including the product register, this adds a total latency of 8 cycles. In exchange, timing closure becomes much easier while throughput remains at 1 sample per clock. Functionally, this architecture does not change the filter output. The impulse and step responses are bit-identical to those of `fir_basic`; they simply appear later in time. Accordingly, `dout_valid` shifts from 85 ns to 165 ns, while the coefficient sequence itself remains unchanged.
 
-$$s_0(i) = p(i)$$
+$$s_0(i) = \mathtt{product}(i), \qquad 0 \le i < 96$$
+
+$$s_0(i) = 0, \qquad 96 \le i < 128$$
 (*Equation 3*)
 
-$$s_{m+1}(i) = \mathtt{reg}[s_m(2i) + s_m(2i{+}1)], \qquad m = 0, \ldots, 6$$
+$$s_{m+1}(i) = reg[s_m(2i) + s_m(2i{+}1)], \qquad m = 0, \ldots, 6$$
 (*Equation 4*)
 
 ### 4.3 L=2 Parallel FIR (`fir_parallel_L2.v`)
@@ -162,29 +164,29 @@ $$s_{m+1}(i) = \mathtt{reg}[s_m(2i) + s_m(2i{+}1)], \qquad m = 0, \ldots, 6$$
 Decompose the transfer function into even and odd polyphase components in *Equation 5*[3] where each sub-filter has $N/2 = 96$ taps in *Equation 6*. The two output samples per clock cycle are calculated in *Equations 7* and *8*, where $x_0(n) = x(2n)$ (even input stream) and $x_1(n) = x(2n{+}1)$ (odd input stream).
 
 $$H(z) = H_e(z^2) + z^{-1}\,H_o(z^2)$$
-*(Equation 5)*
+(*Equation 5*)
 
 $$H_e(z) = \sum_{j=0}^{95} h(2j)\,z^{-j}, \qquad H_o(z) = \sum_{j=0}^{95} h(2j{+}1)\,z^{-j}$$
-*(Equation 6)*
+(*Equation 6*)
 
 ##### *Polyphase Equations*
 $$y(2n)   = \sum_{j=0}^{95} h_e(j)\,x_0(n{-}j) \;+\; \sum_{j=0}^{95} h_o(j)\,x_1(n{-}1{-}j)$$
-*(Equation 7)*
+(*Equation 7*)
 
 $$y(2n{+}1) = \sum_{j=0}^{95} h_e(j)\,x_1(n{-}j) \;+\; \sum_{j=0}^{95} h_o(j)\,x_0(n{-}j)$$
-*(Equation 8)*
+(*Equation 8*)
 
 ##### *Symmetry-Based Multiplier Reduction*
 From the original linear-phase symmetry $h(k) = h(191{-}k)$ we can see in *Equation 9*, $H_o$ is $H_e$ time-reversed. Substituting $h_o(j) = h_e(95{-}j)$ and re-indexing the odd sums lets us form cross pre-adds that share the same coefficient sets in *Equations 10* and *11*.  That takes the multiplier count from a naive 384 down to 192. So the L=2 version really does buy two outputs per clock without paying the full brute-force duplication cost.  Latency-wise, L=2 still looks like the basic design because there is only one output register stage. The gain is throughput. Two samples come out each clock, so the simulation finishes much sooner and the VCD shrinks because the same 192 outputs flush in fewer cycles.
 
 $$h_e(j) = h(2j), \qquad h_o(j) = h(2j{+}1) = h(191{-}(2j{+}1)) = h(2(95{-}j)) = h_e(95{-}j)$$
-*(Equation 9)*
+(*Equation 9*)
 
 $$y(2n)   = \sum_{j=0}^{95} h_e(j)\,\bigl[\,x_0(n{-}j) + x_1(n{-}96{+}j)\,\bigr]$$
-*(Equation 10)*
+(*Equation 10*)
 
 $$y(2n{+}1) = \sum_{j=0}^{95} h_e(j)\,\bigl[\,x_1(n{-}j) + x_0(n{-}95{+}j)\,\bigr]$$
-*(Equation 11)*
+(*Equation 11*)
 
 ### 4.4 L=3 Parallel FIR (`fir_parallel_L3.v`)
 #### Polyphase Decomposition (L = 3)
@@ -196,7 +198,7 @@ $$H(z) = H_0(z^3) + z^{-1}\,H_1(z^3) + z^{-2}\,H_2(z^3)$$
 $$H_p(z) = \sum_{j=0}^{63} h(3j{+}p)\,z^{-j}, \qquad p = 0, 1, 2$$
 (*Equation 13*)
 
-$$y(3n)     = \sum_{p=0}^{2} \sum_{j=0}^{63} h_p(j)\,x_{(0-p)\bmod 3}(n - j - \lfloor p/3 \rfloor')$$
+$$y(3n{+}r) = \sum_{p=0}^{2} \sum_{j=0}^{63} h_p(j)\,x_{(r-p)\bmod 3}\!\left(n - j - \left\lfloor \frac{p + 2 - r}{3} \right\rfloor\right), \qquad r = 0, 1, 2$$
 (*Equation 14*)
 
 ##### *Polyphase Equations*
@@ -220,10 +222,10 @@ $$h_0(j) = h(3j), \qquad h_2(j) = h(3j{+}2) = h(191{-}(3j{+}2)) = h(3(63{-}j)) =
 (*Equation 18*)
 
 ##### *Polyphase Equations*
-$$y(3n) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl0}[j] + \mathtt{dl1}[64{-}j]\bigr] + (H_1 \text{ term})$$
+$$y(3n) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl0}[j] + \mathtt{dl1}[63{-}j]\bigr] + (H_1 \text{ term})$$
 (*Equation 19*)
 
-$$y(3n{+}1) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl1}[j] + \mathtt{dl2}[64{-}j]\bigr] + (H_1 \text{ term})$$
+$$y(3n{+}1) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl1}[j] + \mathtt{dl2}[63{-}j]\bigr] + (H_1 \text{ term})$$
 (*Equation 20*)
 
 $$y(3n{+}2) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl2}[j] + \mathtt{dl0}[63{-}j]\bigr] + (H_1 \text{ term})$$
@@ -241,13 +243,16 @@ This one is just the L=3 structure with the long per-channel reduction tree brok
 
 #### Pipeline Structure
 
-Each output channel sums 96 products (64 from $H_0$ + 32 from $H_1$). These are padded to $2^7 = 128$ entries and reduced through a balanced binary tree:
+Each output channel sums 96 products, with 64 contributions from $H_0$ and 32 from $H_1$. To keep the reduction tree balanced, those 96 values are padded to $2^7 = 128$ entries before the summation begins. The first stage is therefore a padded product vector $s_0[k]$, and each later stage halves the number of entries by adding adjacent pairs. A pipeline register is inserted after every tree level. In *Equations 24-26*, $|s_m|$ denotes the number of entries present in stage $m$, not the bit width of each entry. After the seventh reduction stage, each channel is left with a single value $s_7$. *Table 5* makes the pipeline cost explicit: most of the added state is concentrated in the front half of the tree, where the padded product arrays are widest.
 
-$$s_0[k] = \begin{cases} \text{product}[k], & 0 \le k < 96 \\ 0, & 96 \le k < 128 \end{cases}$$
+$$s_0[k] = \mathtt{product}[k], \qquad 0 \le k < 96$$
+(*Equation 24*)
 
-$$s_{m+1}[k] = s_m[2k] + s_m[2k{+}1], \qquad |s_{m+1}| = \tfrac{1}{2}\,|s_m| \;\text{(entries, not bit width)}$$
+$$s_0[k] = 0, \qquad 96 \le k < 128$$
+(*Equation 25*)
 
-for $m = 0, 1, \ldots, 6$, with a pipeline register after every stage. The final sum $s_7$ is a single value per channel.
+$$s_{m+1}[k] = s_m[2k] + s_m[2k{+}1], \qquad |s_{m+1}| = \tfrac{1}{2}|s_m|, \qquad m = 0, 1, \ldots, 6$$
+(*Equation 26*)
 
 | Stage | Entries per channel | Total registers (3 ch.) |
 |---|---|---|
@@ -263,17 +268,17 @@ for $m = 0, 1, \ldots, 6$, with a pipeline register after every stage. The final
 
 *TABLE 5: L=3 Pipelined Adder-Tree Register Counts*
 
-Table 5 makes the pipeline cost explicit: most of the added state is concentrated in the front half of the tree, where the padded product arrays are widest.
-
 #### Latency
+The latency follows directly from the register placement. There is one register stage at the product input and seven more across the reduction tree, so the pipelined structure adds 8 cycles relative to the combinational version. Including the final output register, the total `din_valid` to `dout_valid` latency becomes 9 clock cycles, as summarized in *Equations 27* and *28*.
 
-$$L_{\text{pipe}} = 1\;(\text{product reg}) + 7\;(\text{tree stages}) = 8 \text{ extra cycles}$$
+$$L_{pipe} = 1 + 7 = 8$$
+(*Equation 27*)
 
-Total latency from `din_valid` to `dout_valid`: $1\;(\text{product reg}) + 7\;(\text{tree stages}) + 1\;(\text{output reg}) = 9$ clock cycles, vs. 1 for `fir_parallel_L3`.
+$$L_{total} = 1 + 7 + 1 = 9$$
+(*Equation 28*)
 
 #### Performance Summary
-
-Table 6 compares the non-pipelined and pipelined L=3 architectures at the structural level.
+Table 6 compares the non-pipelined and pipelined \(L = 3\) architectures at the structural level. The interface is unchanged from `fir_parallel_L3`: the design accepts three input samples per clock (`din_0`, `din_1`, `din_2`) and produces three output samples per clock (`dout_0`, `dout_1`, `dout_2`). The `dout_valid` signal is generated by an 8-bit shift register that delays `din_valid` through the pipeline so that output validity remains aligned with the corresponding filtered results. Functionally, the outputs still match `fir_parallel_L3` bit-for-bit. The difference is in latency and bookkeeping rather than numerical behavior.
 
 | Metric | fir\_parallel\_L3 | fir\_parallel\_L3\_pipelined |
 |---|---|---|
@@ -284,22 +289,13 @@ Table 6 compares the non-pipelined and pipelined L=3 architectures at the struct
 | Critical path | Pre-add → multiply → 96-product combinational adder tree | Pre-add → multiply → 2-input add (1 stage) |
 
 *TABLE 6: L=3 Parallel vs. L=3 Parallel Pipelined Comparison*
-
-- Interface: same as `fir_parallel_L3`. Takes three samples per clock (`din_0`, `din_1`, `din_2`), produces three outputs per clock (`dout_0`, `dout_1`, `dout_2`).
-- `dout_valid` is generated via an 8-bit shift register that tracks `din_valid` through the pipeline.
-
-The outputs still match `fir_parallel_L3` bit-for-bit. What changes is latency and bookkeeping. `dout_valid` shifts from 85 ns to 165 ns, the testbench runs a bit longer, and the VCD gets bigger because there are many more registers toggling.
-
 #### Why Pipelined Parallel Wins on Real Hardware
-
 If I only looked at simulation time, I could talk myself into preferring the non-pipelined L3. That would be the wrong conclusion. Both testbenches run at the same fixed 100 MHz clock, so simulation hides the real issue. On hardware, Fmax matters more than how fast a testbench transcript scrolls by, and the pipelined tree wins there for obvious reasons.
 
 ### 4.6 MCM Direct-Form FIR (`fir_mcm.v`)
-
 This is the version where I give the DSP blocks back and pay for it in logic instead. Every multiplier in `fir_basic` becomes a Canonic Signed Digit shift-add network [3].
 
 #### CSD Decomposition
-
 CSD uses digits in $\{-1, 0, +1\}$ and avoids adjacent non-zero entries. In hardware terms, that matters because every non-zero digit turns into extra work. The shifts are cheap. The adds and subtracts are not.
 
 The decomposition was generated and verified in MATLAB (`FIR_Filter_Project.m`, Section 9). Table 7 summarizes the overall CSD workload:
@@ -314,7 +310,6 @@ The decomposition was generated and verified in MATLAB (`FIR_Filter_Project.m`, 
 *TABLE 7: CSD Decomposition Summary*
 
 #### Example Decompositions
-
 Table 8 gives representative coefficient decompositions, from simple low-NZD cases to the most expensive coefficient in the set.
 
 | Coeff | Value | CSD | NZD | Verilog Expression |
@@ -327,18 +322,16 @@ Table 8 gives representative coefficient decompositions, from simple low-NZD cas
 *TABLE 8: Example CSD Coefficient Decompositions*
 
 #### Architecture
-
 Everything is identical to `fir_basic` except the multiply stage:
 
 1. Delay line: 192-tap shift register (same as basic)
-2. Symmetric pre-adds: 96 adders folding $\text{tap}[k] + \text{tap}[191{-}k]$ (same)
+2. Symmetric pre-adds: 96 adders folding `tap[k] + tap[191-k]` (same)
 3. Products: CSD shift-add networks instead of DSP multipliers. Each `preadd[k]` is sign-extended to the 38-bit internal accumulator width, then shifted and added/subtracted per the CSD decomposition.
 4. Adder tree: 7-level binary tree, pad-to-128 (same)
 5. Output register: 1-cycle latency (same)
 
 #### Common Sub-Expression Analysis
-
-MATLAB Section 9b identifies sub-expression pairs shared across multiple coefficients. The most common patterns are listed in Table 9:
+MATLAB Section 9b identifies sub-expression pairs shared across multiple coefficients. The most common patterns are listed in *Table 9*. If I kept pushing this architecture, that is where I would go next. A graph-based CSE tool such as RAG-n or Hcub [3] could reuse those repeated pieces instead of rebuilding them over and over inside each coefficient network.
 
 | Sub-expression | Occurrences across 96 coefficients |
 |---|---|
@@ -349,25 +342,16 @@ MATLAB Section 9b identifies sub-expression pairs shared across multiple coeffic
 
 *TABLE 9: Common CSD Sub-Expression Patterns*
 
-If I kept pushing this architecture, that is where I would go next. A graph-based CSE tool such as RAG-n or Hcub [3] could reuse those repeated pieces instead of rebuilding them over and over inside each coefficient network.
-
 #### Simulation and Trade-offs
-
 Impulse and step both match `fir_basic` exactly (same 192 coefficients, same DC gain). The downside is pretty obvious in the synthesis results. Giving up 96 DSP blocks means taking on 357 add/sub operations plus a lot of extra routing, and that is why the ALM count jumps so much. The longest CSD paths are also deeper than a single DSP multiply, so timing drops from 38.7 MHz to 33.2 MHz. So where would I actually use this? Mostly in a design where DSP blocks are tight or already reserved for something else. On this Cyclone V it is mainly a comparison point. On a smaller part, it could be the practical answer.
 
 ### 4.7 MCM Pipelined FIR (`fir_mcm_pipelined.v`)
-
-Same CSD shift-add products as `fir_mcm`, but with the 7-stage registered adder tree from `fir_pipelined` instead of a single combinational pass. Eight extra clock cycles of latency, same as the DSP pipelined variant.
-
-What surprised me a bit here is how well pipelining rescues the MCM version. Once the long CSD chains are cut up by registers, it reaches about 58.6 MHz, essentially the same as the DSP-pipelined design, and it still uses zero DSP blocks.
+Same CSD shift-add products as `fir_mcm`, but with the 7-stage registered adder tree from `fir_pipelined` instead of a single combinational pass. Eight extra clock cycles of latency, same as the DSP pipelined variant. What surprised me a bit here is how well pipelining rescues the MCM version. Once the long CSD chains are cut up by registers, it reaches about 58.6 MHz, essentially the same as the DSP-pipelined design, and it still uses zero DSP blocks.
 
 ## 5. Synthesis Results
 
 ### 5.1 FPGA Target
-
-Device: Cyclone V 5CGXFC9E7F35C8 (GX variant, F35 package, speed grade C8)
-
-Table 10 summarizes the device resources available on the target FPGA.
+Device: Cyclone V 5CGXFC9E7F35C8 (GX variant, F35 package, speed grade C8). Since this project was sythesis only the target device was picked as a potential candidate based on previous work, and number of resources available for more complex architectures.
 
 | Resource      | Available |
 |---------------|-----------|
@@ -378,17 +362,19 @@ Table 10 summarizes the device resources available on the target FPGA.
 
 *TABLE 10: Cyclone V Target Device Resources*
 
-Device choice was mostly forced by the design set [1]. The L=3 parallel versions can use 288 DSP blocks. The smaller 5CGXFC7C7F23C8 part only has 156, so that would have cut out a large part of the comparison immediately.
-
-Timing constraint: 100 MHz target clock (`fir.sdc` in `coding/verilog/quartus/`).
-
 ### 5.2 DSP Chain Note
-
 For the non-pipelined versions, explicit combinational reduction trees were necessary. If left alone, Quartus tried to infer DSP accumulation chains longer than the Cyclone V limit of 22 blocks. That path went nowhere.
 
 ### 5.3 38-Bit Internal Accumulator Results
+*Table 11* collects the main post-fit area and timing results for all seven FIR architectures. \(F_{\max}\) was calculated from the worst-case setup slack \(s\), in ns, using *Equation 29* under the Slow 1100 mV, 85 \(^\circ\)C timing model, which represents the worst-case operating corner.
 
-Table 11 collects the main post-fit area and timing results for all seven FIR architectures.
+For the direct-form architecture, the setup slack was \(-15.832\) ns, giving \(F_{\max} = 1000 / 25.832 = 38.7\) MHz.  
+For the pipelined architecture, the setup slack improved to \(-7.038\) ns, giving \(F_{\max} = 1000 / 17.038 = 58.7\) MHz.  
+For the MCM direct-form architecture, the setup slack was \(-20.093\) ns, which gives \(F_{\max} = 1000 / 30.093 = 33.2\) MHz.  
+For the pipelined MCM architecture, the setup slack was \(-7.074\) ns, giving \(F_{\max} = 1000 / 17.074 = 58.6\) MHz.  
+For the \(L=2\) parallel architecture, the setup slack was \(-16.984\) ns, giving \(F_{\max} = 1000 / 26.984 = 37.1\) MHz. Since this version produces two output samples per clock, its throughput is \(2 \times 37.1 = 74.1\) Msps.  
+For the \(L=3\) parallel architecture, the setup slack was \(-17.465\) ns, giving \(F_{\max} = 1000 / 27.465 = 36.4\) MHz. Because it produces three output samples per clock, its throughput is \(3 \times 36.4 = 109.2\) Msps.  
+For the pipelined \(L=3\) architecture, the setup slack was \(-7.166\) ns, giving \(F_{\max} = 1000 / 17.166 = 58.3\) MHz. With three output samples per clock, its throughput is \(3 \times 58.3 = 174.8\) Msps.
 
 | Architecture | Area (ALMs) | Registers | DSP Blocks | Fmax (MHz) | Throughput (Msps) |
 |---|---|---|---|---|---|
@@ -402,19 +388,15 @@ Table 11 collects the main post-fit area and timing results for all seven FIR ar
 
 *TABLE 11: Post-Fit Area and Timing Results*
 
-Fmax was calculated as $F_{\max} = \frac{1}{T_{clk} - \text{slack}} = \frac{1000}{10 - \text{slack (ns)}}$ using the Slow 1100 mV 85 °C model (worst-case).
-
-- Direct-form: slack = −15.832 ns, so $F_{\max} = 1000 / 25.832 = 38.7$ MHz
-- Pipelined: slack = −7.038 ns, so $F_{\max} = 1000 / 17.038 = 58.7$ MHz
-- MCM direct-form: slack = −20.093 ns, so $F_{\max} = 1000 / 30.093 = 33.2$ MHz
-- MCM pipelined: slack = −7.074 ns, so $F_{\max} = 1000 / 17.074 = 58.6$ MHz
-- L=2 parallel: slack = −16.984 ns, so $F_{\max} = 1000 / 26.984 = 37.1$ MHz, throughput = 2 × 37.1 = 74.1 Msps
-- L=3 parallel: slack = −17.465 ns, so $F_{\max} = 1000 / 27.465 = 36.4$ MHz, throughput = 3 × 36.4 = 109.2 Msps
-- L=3 pipelined: slack = −7.166 ns, so $F_{\max} = 1000 / 17.166 = 58.3$ MHz, throughput = 3 × 58.3 = 174.8 Msps
+$$F_{\max} = \frac{1000}{10 - s}$$
+(*Equation 29*)
 
 ### 5.4 Interconnect Usage
+Routing resource utilization from the Quartus Fitter, reported as average and peak interconnect congestion, is summarized in *Table 12*. The routing results are more important here than the surrounding prose. The \(L=3\) parallel design shows the worst interconnect demand by a wide margin, with 12.0% average congestion and a 62.2% peak in the vertical routing direction. This is still about 1.8× the average interconnect usage of the \(L=2\) case. Structurally, three input data buses feeding 288 DSP blocks place heavy demand on the vertical routing channels between DSP columns.
 
-Routing resource utilisation from the Quartus Fitter (average and peak interconnect congestion) is summarized in *Table 12*:
+The \(L=2\) parallel design is lower at 6.5% average interconnect congestion and 47.1% peak vertical congestion. This is consistent with the architecture: doubling the data paths roughly doubles the wiring burden relative to the single-stream baseline. Adding pipelining to the \(L=3\) architecture still improves routing substantially. Peak vertical congestion drops from 62.2% to 33.3%, while average interconnect usage falls from 12.0% to 8.9%. The added pipeline registers give the fitter more freedom to distribute logic across the device. The tradeoff is a large increase in register activity, with nearly 20k registers contributing 6% block interconnect usage and a maximum fan-out of 20,319. The MCM direct-form design still shows relatively high peak congestion at 31.5% despite a low average value, indicating that the CSD shift-add structures create localized routing hotspots around the large-coefficient products. The pipelined MCM version reduces that peak to 20.5% by breaking up the longer combinational paths.
+
+Among the current runs, the DSP-pipelined design shows the lowest peak congestion at 16.5%, which is likely due to the benefit of dedicated routing within the DSP columns. This became especially clear in the \(L=3\) parallel case. I initially spent a long time focused only on the timing reports, but the real issue did not fully make sense until I examined the interconnect report. Once the routing data was included, it became clear that the vertical routing channels were the dominant bottleneck.
 
 | Architecture | Avg Interconnect (total/H/V) | Peak Interconnect (total/H/V) | Block IC | Fan-out (avg) | Fan-out (max) |
 |---|---|---|---|---|---|
@@ -428,22 +410,15 @@ Routing resource utilisation from the Quartus Fitter (average and peak interconn
 
 *TABLE 12: Interconnect Congestion and Fan-Out Summary*
 
-The routing numbers matter more here than the prose around them:
-- L=3 parallel has the worst interconnect by a wide margin: 12.0% average (still about 1.8x L=2) and 62.2% vertical peak. Three data buses feeding 288 DSP blocks saturate the vertical routing channels between DSP columns.
-- L=2 parallel sits at 6.5% average and 47.1% vertical peak. Double the data buses, roughly double the wiring.
-- Adding pipelining to L=3 still helps routing materially: peak vertical congestion drops from 62.2% to 33.3%, and average interconnect drops from 12.0% to 8.9%. The pipeline registers let the fitter spread logic across more of the chip. The tradeoff is nearly 20K registers driving 6% block interconnect and a max fan-out of 20,319.
-- MCM direct-form still has high peak congestion (31.5%) despite low average, because the CSD shift-add chains create localised routing hotspots around the large-coefficient products. The pipelined MCM cuts that to 20.5% by breaking up the long combinational paths.
-- DSP pipelined has the lowest peak in the current runs at 16.5%, thanks to dedicated routing inside the DSP columns.
-
-One point where this became very obvious: I spent a long time staring at the L=3 parallel timing reports before it finally clicked that the vertical routing channels were getting hammered. Once I looked at the interconnect report instead of only the slack number, the problem made much more sense.
-
 ### 5.5 Critical Path Delay Breakdown
-
-The earlier CELL-versus-IC breakdown table was generated from a separate manual `report_timing -detail full_path` pass. That custom timing report was not regenerated in the current standardized Quartus rerun, so I removed the stale table rather than leave mismatched numbers here. The current source-of-truth tables in this section now come directly from the latest `.fit.summary`, `.sta.summary`, `.fit.rpt`, and `.pow.summary` files.
+The earlier CELL-versus-IC breakdown table was generated from a separate manual `report_timing -detail full_path` run. Because that custom timing report was not regenerated during the current standardized Quartus rerun, I removed the stale table rather than keep values that no longer matched the rest of the section. The source-of-truth tables presented here now come directly from the latest `.fit.summary`, `.sta.summary`, `.fit.rpt`, and `.pow.summary` files.
 
 ### 5.6 Power Estimation
+These numbers were obtained from Quartus Prime PowerPlay using vectorless estimation with the default 12.5% toggle rate, so they were treated as comparative ranking data rather than absolute power values. *Table 13* summarizes these estimates. Static power changes very little across the different architectures, so the more meaningful differences appear in dynamic power.
 
-These numbers came from Quartus Prime PowerPlay with vectorless estimation and the default 12.5% toggle rate. So I treated them as ranking data, not absolute truth. Table 13 summarizes those estimates. Static power barely moves. Dynamic power is the part worth looking at.
+The clearest trend is that the MCM-based implementations consume significantly less dynamic power than the DSP-heavy versions, which is consistent with their reduced dependence on dedicated multiplier hardware. At the other extreme, the pipelined \(L=3\) architecture is the most expensive in power by a wide margin. This is not difficult to explain structurally: it combines three parallel channels, deeply registered adder trees, and a 100 MHz operating target. More broadly, the same pattern appears across the design set: whenever timing improves through the addition of more pipeline registers, the power cost tends to increase in return.
+
+One important caveat is that these are not activity-driven power estimates. They are useful for comparing the relative behavior of the seven architectures, but they should not be treated as final sign-off power numbers.
 
 | Architecture | Dynamic (mW) | Static (mW) | I/O (mW) | Total (mW) |
 |---|---|---|---|---|
@@ -457,17 +432,14 @@ These numbers came from Quartus Prime PowerPlay with vectorless estimation and t
 
 *TABLE 13: Vectorless Power Estimation Summary*
 
-First thing that jumps out: the MCM versions use much less dynamic power than the DSP-heavy versions. That part was not too surprising.
-
-At the other end, L=3 pipelined is expensive in power by a wide margin. Three channels. Deep registered trees. 100 MHz. The result is not subtle. More generally, every time timing improved because of extra registers, power pushed the other way.
-
-One important caveat: these are not activity-driven estimates. They are good enough for ranking the architectures, but I would not treat them as final power-budget numbers.
-
 ## 6. Further Analysis and Conclusion
 
 ### 6.1 Architecture Comparison
+Putting all of the architectures on the same throughput-efficiency basis makes the trade-offs much easier to compare. *Table 14* compiles the derived efficiency metrics using the 38-bit internal accumulator results. The clearest result from the table is straightforward: once the filter reaches this size, pipelining is no longer optional. Whether the implementation uses DSP blocks, MCM, or polyphase parallelism, the same pattern appears. The pipelined versions cluster tightly between about 58.3 and 58.7 MHz, while the non-pipelined versions remain limited to the low-to-high 30 MHz range because the reduction tree dominates the critical path.
 
-Putting everything on the same throughput-efficiency footing makes the trade-offs easier to see. Table 14 compiles the derived efficiency metrics using the 38-bit internal-accumulator results, which still match the current RTL because only the external interface was narrowed to 32 bits and saturated.
+Polyphase parallelism behaves largely as expected. Throughput scales nearly linearly with the parallel factor, while per-channel timing stays in roughly the same range. The non-pipelined \(L=2\) and \(L=3\) designs look especially strong in throughput per ALM because they avoid the additional register overhead required by deep pipelines. If the goal is maximum raw throughput, the pipelined \(L=3\) design is the strongest option, but it achieves that performance with a clear area and power cost.
+
+MCM with CSD ends up occupying a more specialized part of the design space. It performs worse in ALM usage, but better in DSP usage, and it ended up more power-efficient than I initially expected. That makes it appealing in cases where preserving DSP blocks matters more than minimizing logic consumption. It also still feels like an unfinished optimization opportunity in a productive sense. The repeated CSE patterns identified in Section 4.6 suggest that a more sophisticated optimizer could likely reduce the shift-add count further.
 
 | Architecture | Fmax (MHz) | Throughput (Msps) | ALMs | DSPs | Dynamic Power (mW) | Throughput/ALM (Ksps/ALM) | Throughput/mW (Msps/mW) |
 |---|---|---|---|---|---|---|---|
@@ -481,42 +453,24 @@ Putting everything on the same throughput-efficiency footing makes the trade-off
 
 *TABLE 14: Architecture Efficiency Comparison*
 
-The clearest takeaway from the table is simple: once the filter gets this large, pipelining stops being optional. DSP, MCM, parallel, it does not matter much. The pipelined versions all end up clustered around 58.3 to 58.7 MHz. Without those registers, the reduction tree pulls Fmax back into the low-to-high 30 MHz range.
-
-Polyphase parallelism behaved about the way it should. Throughput scales almost linearly with the parallel factor. Per-channel timing stays in the same neighborhood. The non-pipelined L=2 and L=3 versions look especially good in throughput per ALM because they are not carrying the extra register overhead of deep pipelines. If all I care about is raw throughput, L=3 plus pipelining wins, but not cheaply.
-
-MCM with CSD ends up in a very specific corner of the design space. Worse in ALMs. Better in DSP usage. Better than I expected in power efficiency. That makes it attractive if DSP blocks matter more than logic. It also still feels unfinished, in a good way. The repeated CSE patterns from Section 4.6 suggest that a smarter optimizer could trim the shift-add count quite a bit further.
-
 ### 6.2 Hybrid MCM-DSP Architecture (Future Work)
+One architecture I did not implement, but would like to explore next, is a hybrid multiplier mapping strategy. In that approach, small-magnitude coefficients with low nonzero digit (NZD) count would remain in CSD-based shift-add fabric, while the larger coefficients would be mapped to DSP blocks. For example, a coefficient such as \(h(6) = 136 = 2^3 + 2^7\) requires only two shift-add terms and is very inexpensive to keep in logic. In contrast, a coefficient such as \(h(95) = 216{,}278\), with 9 nonzero digits and 8 cascaded add operations, is a much stronger candidate for DSP implementation.
 
-One thing I didn't build but would like to try: a hybrid where the small-magnitude coefficients (low NZD, like h(6) = 136 = `+2^3 + 2^7`, just 2 operations) stay in CSD shift-add fabric, while the big coefficients (h(95) = 216,278 with 9 NZD and 8 cascaded operations) get mapped to DSP blocks. That would cut ALM usage versus pure MCM by offloading the most complex shift-add chains, cut DSP usage versus pure DSP by keeping the roughly 30 coefficients with NZD ≤ 3 in fabric (1 to 2 adders each, way cheaper than a dedicated DSP block), and shorten the critical path since the longest CSD chains currently set the MCM Fmax ceiling at 33.2 MHz.
+A hybrid partition like this could reduce ALM usage relative to the pure MCM design by offloading the most expensive shift-add chains into DSP blocks. At the same time, it could reduce DSP usage relative to the pure DSP design by keeping the simplest coefficients in fabric. In this design, roughly 30 coefficients have NZD \(\leq 3\), which means they can be realized with only one or two adders each and are likely much cheaper than assigning an entire DSP block. This approach could also improve timing, since the longest CSD chains currently dominate the critical path and appear to be the main reason the MCM version is limited to about 33.2 MHz.
 
-The partitioning threshold (how many NZD before a coefficient "deserves" a DSP) is itself an optimisation problem trading ALMs, DSPs, power, and timing closure. Natural next step from this project.
+The partitioning rule itself would become its own optimization problem. Choosing the NZD threshold at which a coefficient should move from logic into a DSP would require balancing ALM usage, DSP usage, dynamic power, and timing closure. That makes this a natural next step emerging from the current project.
 
 ### 6.3 Conclusion
+By the end of the project, it felt like much more than just building an FIR filter. It became an exercise in repeatedly asking how much farther the same design could be pushed through better structural decisions. Quantization was manageable, but only after I stopped treating it as a secondary detail. \(Q=20\) turned out to be the point where the stopband target survived rounding without making the coefficients any wider than necessary. Reaching that point by moving beyond the 100-tap baseline made the numerical side of the problem easier, but it also made the hardware side more demanding. For timing, pipelining was by far the strongest lever. Once the reduction tree was broken into registered stages, all of the pipelined versions converged to roughly 58.3 to 58.7 MHz. Without pipelining, the long combinational summation path kept \(F_{\max}\) in the 33 to 39 MHz range. In that sense, the timing data made the design decision difficult to argue against. Polyphase decomposition was the cleanest way I found to increase throughput. The non-pipelined \(L=3\) version in particular delivers a large throughput gain for the amount of hardware it uses. That was one of the clearest moments where a course concept stopped being just a block diagram and became something measurable that I could compare directly.
 
-By the end, this project felt less like just building a FIR filter and more like repeatedly asking how much farther the same design could be pushed with better structural decisions.
+The MCM/CSD approach also proved to be more than a side curiosity. It gives up timing and logic area, but it eliminates DSP usage entirely and does so with the lowest dynamic power in the design set. Working through those trade-offs, especially where area could be reduced or critical path depth could be shortened, was a large part of what made the project rewarding from a learning perspective.
 
-Quantization was manageable, but only once I stopped treating it like a side detail. Q=20 ended up being the point where the stopband target survived rounding without making the coefficients wider than they needed to be. Getting there by moving beyond the 100-tap starting point made the numeric problem easier and the hardware problem harder.
-
-For timing, pipelining was the strongest lever by far. Once the reduction tree was broken up stage by stage, all of the pipelined versions clustered around 58.3 to 58.7 MHz. Without it, the long combinational sum path kept the clock down in the 33 to 39 MHz range. That was one of the places where the data made the design choice pretty hard to argue with.
-
-Polyphase decomposition was the cleanest way I found to buy throughput. The non-pipelined L=3 version, in particular, gets a lot done for the amount of hardware it uses. That was one of the clearer moments where a course concept stopped being a diagram and turned into a number I could actually compare.
-
-The MCM/CSD path also ended up being more than a curiosity. It gives up timing and logic area, but it frees every DSP block and does it with the lowest dynamic power in the set. Working through those trade-offs, especially where area or path depth could be cut, was a big part of what made the project worthwhile from a learning standpoint.
-
-## 7. Open-Ended Final Design Project
-
-Selected topic: Viterbi decoder, high-performance VLSI architecture and RTL implementation.
-
-## 8. References
-
+## 7. References
 [1] Course Project Specification: `Supporting_Documentation/Project.pdf`
 
 [2] MATLAB `firpm` documentation: https://www.mathworks.com/help/signal/ref/firpm.html
 
 [3] K. K. Parhi, *VLSI Digital Signal Processing Systems: Design and Implementation*, Wiley, 1999, Ch. 8–11.
 
-## 9. Acknowledgements
-
+## 8. Acknowledgements
 GitHub Copilot was used primarily to improve efficiency. Because this work required seven separate Quartus runs, there was a significant amount of repetitive compile-check-report effort. Copilot helped accelerate that workflow by assisting with routine iteration, identifying obvious warnings or errors, and helping review timing and area reports. However, the underlying design decisions, RTL development, and analysis were my own. Its role was limited to reducing the overhead of repetitive tasks.
