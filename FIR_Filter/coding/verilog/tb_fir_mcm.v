@@ -1,13 +1,13 @@
 // ============================================================================
-// tb_fir_pipelined.sv — Testbench for fir_pipelined
+// tb_fir_mcm.v — Testbench for fir_mcm (MCM / CSD shift-add FIR)
 // ============================================================================
 `timescale 1ns / 1ps
 
-module tb_fir_pipelined;
+module tb_fir_mcm;
 
-    parameter W_IN     = 16;
-    parameter W_COEFF  = 21;
-    parameter W_OUT    = 32;
+    parameter W_IN    = 16;
+    parameter W_COEFF = 21;
+    parameter W_OUT   = 32;
     parameter NUM_TAPS = 192;
 
     reg                        clk;
@@ -17,7 +17,8 @@ module tb_fir_pipelined;
     wire signed [W_OUT-1:0]    dout;
     wire                       dout_valid;
 
-    fir_pipelined #(
+    // --- DUT ---
+    fir_mcm #(
         .NUM_TAPS(NUM_TAPS),
         .W_IN(W_IN),
         .W_COEFF(W_COEFF),
@@ -31,58 +32,51 @@ module tb_fir_pipelined;
         .dout_valid(dout_valid)
     );
 
-    // 10 ns period (100 MHz)
+    // --- Clock: 10 ns period (100 MHz) ---
     initial clk = 0;
     always #5 clk = ~clk;
 
+    // --- Stimulus ---
     integer k;
-    integer sample_cnt;
-
     initial begin
 `ifndef MODELSIM_VCD
-        $dumpfile("fir_pipelined.vcd");
-        $dumpvars(0, tb_fir_pipelined);
+        $dumpfile("fir_mcm.vcd");
+        $dumpvars(0, tb_fir_mcm);
 `endif
 
         rst_n     = 0;
         din       = 0;
         din_valid = 0;
 
+        // Hold reset for a few cycles
         #50;
         rst_n = 1;
         #20;
 
-        // ----- Impulse response -----
+        // ----- Test 1: Impulse response -----
         @(posedge clk);
         din       = 16'sd1;
         din_valid = 1;
         @(posedge clk);
         din       = 16'sd0;
 
-        sample_cnt = 0;
-        for (k = 0; k < NUM_TAPS + 20; k = k + 1) begin
+        for (k = 0; k < NUM_TAPS + 10; k = k + 1) begin
             @(posedge clk);
-            if (dout_valid) begin
-                $display("y[%0d] = %0d", sample_cnt, dout);
-                sample_cnt = sample_cnt + 1;
-            end
+            if (dout_valid)
+                $display("y[%0d] = %0d", k, dout);
         end
 
         din_valid = 0;
         #100;
 
-        // ----- Step response -----
+        // ----- Test 2: Step response -----
         @(posedge clk);
         din_valid = 1;
         din       = 16'sd1000;
-
-        sample_cnt = 0;
-        for (k = 0; k < NUM_TAPS + 30; k = k + 1) begin
+        for (k = 0; k < NUM_TAPS + 20; k = k + 1) begin
             @(posedge clk);
-            if (dout_valid) begin
-                $display("step_y[%0d] = %0d", sample_cnt, dout);
-                sample_cnt = sample_cnt + 1;
-            end
+            if (dout_valid)
+                $display("step_y[%0d] = %0d", k, dout);
         end
 
         din_valid = 0;

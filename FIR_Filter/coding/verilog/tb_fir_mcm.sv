@@ -7,7 +7,7 @@ module tb_fir_mcm;
 
     parameter W_IN    = 16;
     parameter W_COEFF = 21;
-    parameter W_OUT   = 38;
+    parameter W_OUT   = 32;
     parameter NUM_TAPS = 192;
 
     reg                        clk;
@@ -39,8 +39,10 @@ module tb_fir_mcm;
     // --- Stimulus ---
     integer k;
     initial begin
+`ifndef MODELSIM_VCD
         $dumpfile("fir_mcm.vcd");
         $dumpvars(0, tb_fir_mcm);
+`endif
 
         rst_n     = 0;
         din       = 0;

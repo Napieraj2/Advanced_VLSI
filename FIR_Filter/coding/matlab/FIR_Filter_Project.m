@@ -29,13 +29,13 @@ a = [1 1 0 0];
 %  Inner loop: increase stopband weight until >= 80 dB stopband.
 %  Stops when BOTH stopband AND passband specs are met.
 
-while numTaps <= 500   % safety cap
+while numTaps <= 500   % safety cap, if too large then very complex filter and specs likely unachievable
     N = numTaps - 1;   % order = taps - 1
 
     % --- inner: sweep stopband weight ---
     w_stop = 50;
     design_ok = false;
-    while w_stop <= 1e7
+    while w_stop <= 1e6  % if too large Q will fail to converge, so cap it
         w = [1 w_stop];
         b = firpm(N, f, a, w);
 
@@ -47,7 +47,7 @@ while numTaps <= 500   % safety cap
         As = -max(magdB(stopIdx));
         Rp = max(magdB(passIdx)) - min(magdB(passIdx));
 
-        if As >= target_atten && Rp <= max_passband_ripple
+        if As >= target_atten && Rp <= max_passband_ripple  % both specs met — design successful
             design_ok = true;
             break;
         elseif As < target_atten
@@ -72,7 +72,7 @@ fprintf('Stopband attenuation: %.2f dB  (target >= %d dB)\n', As, target_atten);
 fprintf('Passband ripple: %.4f dB  (target <= %.1f dB)\n', Rp, max_passband_ripple);
 
 %% 3 — Coefficient Quantization Word-Length Sweep
-% Sweep Q from 8 to 24 to find the minimum word length that keeps >= 80 dB
+% Sweep Q from 14 to 24 to find the minimum word length that keeps >= 80 dB
 Q_candidates = 14:1:24;
 As_q_results = zeros(size(Q_candidates));
 
@@ -80,7 +80,7 @@ fprintf('\n========== Quantization Sweep ==========\n');
 fprintf('%-8s  %-22s  %-10s\n', 'Q bits', 'Stopband Atten (dB)', 'Pass?');
 fprintf('%s\n', repmat('-', 1, 44));
 
-for idx = 1:length(Q_candidates)
+for idx = 1:length(Q_candidates) % loop over candidate Q values
     Qtry = Q_candidates(idx);
     bq_try = round(b * 2^Qtry) / 2^Qtry;
     [Hq_try, ~] = freqz(bq_try, 1, 4096);
@@ -90,7 +90,8 @@ for idx = 1:length(Q_candidates)
             mat2str(As_q_results(idx) >= target_atten));
 end
 
-Q_min_idx = find(As_q_results >= target_atten, 1, 'first');
+Q_min_idx = find(As_q_results >= target_atten, 1, 'first'); % first Q that meets stopband spec after quantization
+
 if isempty(Q_min_idx)
     Q = Q_candidates(end);
     warning('No tested Q achieves %d dB. Using Q = %d.', target_atten, Q);
@@ -121,11 +122,12 @@ end
 
 fprintf('\n========== Coefficient Symmetry ==========\n');
 fprintf('Symmetric pairs: %d / %d possible\n', size(sym_pairs,1), floor(nCoeffs/2));
-for k = 1:size(sym_pairs,1)
+for k = 1:size(sym_pairs,1) % print each symmetric pair
     fprintf('  bq(%d) = bq(%d)  [value = %g]\n', ...
             sym_pairs(k,1), sym_pairs(k,2), bq(sym_pairs(k,1)));
 end
-if size(sym_pairs,1) == floor(nCoeffs/2)
+
+if size(sym_pairs,1) == floor(nCoeffs/2) % all pairs symmetric
     fprintf('All pairs symmetric — linear phase confirmed.\n');
     fprintf('Unique multipliers needed: %d (half of %d taps).\n', ...
             ceil(nCoeffs/2), nCoeffs);
@@ -136,7 +138,7 @@ W_input = 16;                               % signed input data width
 W_coeff = Q + 1;                            % Q fractional + 1 sign bit
 W_mult  = W_input + W_coeff;                % multiply output width
 
-coeff_int    = round(bq * 2^Q);            % integer representation
+coeff_int    = round(bq * 2^Q);             % integer representation
 worst_sum    = sum(abs(coeff_int));
 max_input    = 2^(W_input - 1) - 1;
 worst_accum  = worst_sum * max_input;
@@ -151,7 +153,7 @@ fprintf('Multiply width:     %d bits\n', W_mult);
 fprintf('Naive accum width:  %d bits (mult + ceil(log2(%d)))\n', W_accum_naive, numTaps);
 fprintf('Worst-case accum:   %s\n', num2str(worst_accum));
 fprintf('Actual accum width: %d bits\n', W_accum_needed);
-fprintf('Strategy: %d-bit accumulator — overflow impossible, no saturation/clipping needed.\n', W_accum_needed);
+fprintf('Strategy: keep a %d-bit internal accumulator, then saturate the external output to 32 bits.\n', W_accum_needed);
 
 %% 7 — Plots
 % --- Full magnitude response ---
@@ -242,17 +244,17 @@ function csd = to_csd(val)
     while v ~= 0
         if mod(v, 2) == 1
             if mod(v, 4) == 3          % run of 1s → replace with -1 here, carry +1
-                csd(end+1, :) = [pos, -1]; %#ok<AGROW>
+                csd(end+1, :) = [pos, -1];
                 v = v + 1;
             else
-                csd(end+1, :) = [pos,  1]; %#ok<AGROW>
+                csd(end+1, :) = [pos,  1];
                 v = v - 1;
             end
         end
         v = floor(v / 2);
         pos = pos + 1;
     end
-    if s < 0
+    if s < 0 % if original value was negative, flip signs
         csd(:,2) = -csd(:,2);
     end
 end
@@ -263,7 +265,8 @@ coeff_unique = coeff_int(1:halfN);     % first 96 coefficients
 
 csd_all  = cell(halfN, 1);            % CSD digit arrays
 nzd_all  = zeros(halfN, 1);           % non-zero digit count per coeff
-for k = 1:halfN
+
+for k = 1:halfN % loop over unique coefficients
     csd_all{k} = to_csd(coeff_unique(k));
     nzd_all(k) = size(csd_all{k}, 1);
 end
@@ -282,10 +285,12 @@ fprintf('  Shift-add ops required:      %d\n', totalNZD - halfN);
 % Print CSD for each coefficient
 fprintf('\n%-8s  %-12s  %-4s  %s\n', 'Index', 'Coeff', 'NZD', 'CSD Representation');
 fprintf('%s\n', repmat('-', 1, 72));
-for k = 1:halfN
+
+for k = 1:halfN % loop over unique coefficients
     c = coeff_unique(k);
     d = csd_all{k};
-    % Build human-readable string: +2^a -2^b +2^c ...
+    
+    % Build readable string: +2^a -2^b +2^c ...
     parts = cell(1, size(d,1));
     for j = 1:size(d,1)
         if d(j,2) > 0

@@ -4,7 +4,7 @@ set_global_assignment -name TOP_LEVEL_ENTITY fir_parallel_L3
 set_global_assignment -name ORIGINAL_QUARTUS_VERSION 25.1STD.0
 set_global_assignment -name PROJECT_CREATION_TIME_DATE "11:56:44  MARCH 22, 2026"
 set_global_assignment -name LAST_QUARTUS_VERSION "25.1std.0 Lite Edition"
-set_global_assignment -name SYSTEMVERILOG_FILE ../fir_parallel_L3.sv
+set_global_assignment -name VERILOG_FILE ../fir_parallel_L3.v
 set_global_assignment -name SDC_FILE fir.sdc
 set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
 set_global_assignment -name ERROR_CHECK_FREQUENCY_DIVISOR 256

@@ -1,5 +1,5 @@
 // ============================================================================
-// tb_fir_pipelined.sv — Testbench for fir_pipelined
+// tb_fir_pipelined.v — Testbench for fir_pipelined
 // ============================================================================
 `timescale 1ns / 1ps
 

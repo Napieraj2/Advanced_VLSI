@@ -7,6 +7,7 @@ vsim.wlf
 *.vstf
 *.cr.mti
 *.mpf
+*.ini
 
 # Quartus build artifacts
 *.qsys*

@@ -11,7 +11,7 @@ module tb_fir_parallel_L3;
 
     parameter W_IN     = 16;
     parameter W_COEFF  = 21;
-    parameter W_OUT    = 38;
+    parameter W_OUT    = 32;
     parameter NUM_TAPS = 192;
 
     reg                        clk;
@@ -51,8 +51,10 @@ module tb_fir_parallel_L3;
     integer sample_cnt;
 
     initial begin
+`ifndef MODELSIM_VCD
         $dumpfile("fir_parallel_L3.vcd");
         $dumpvars(0, tb_fir_parallel_L3);
+`endif
 
         rst_n     = 0;
         din_0     = 0;

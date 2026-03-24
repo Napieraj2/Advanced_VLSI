@@ -1,5 +1,5 @@
 // ============================================================================
-// tb_fir_parallel_L2.sv — Testbench for fir_parallel_L2
+// tb_fir_parallel_L2.v — Testbench for fir_parallel_L2
 // ============================================================================
 // Feeds de-interleaved even/odd sample pairs and verifies that the
 // interleaved outputs y_0(k), y_1(k) reproduce the same sequence as

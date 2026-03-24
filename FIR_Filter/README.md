@@ -1,14 +1,14 @@
 # Advanced VLSI: FIR Filter Design Project
 ## 1. Project Overview
 
-The assigned class project focused on designing an FIR filter. Using the provided MATLAB workflow, I was able to quantize the coefficients and implement an equiripple lowpass FIR filter in SystemVerilog.
+The assigned class project focused on designing an FIR filter. Using the provided MATLAB workflow, I was able to quantize the coefficients and implement an equiripple lowpass FIR filter in Verilog.
 
 ### 1.1 Specification
-The project specification baseline was set at 100 taps. As we will see in the design implementation section, this results in a design that is not optimal for signal performance(due to large passband dB swings).  In *Table 1* below we can see the remaining design specs as found in the *FIR_Filter/Supporting Documentation/Project.pdf*.
+The project specification baseline was set at 100 taps. As we will see in the design implementation section, this starting point did not produce an optimal signal-performance result because it led to large passband dB swings.  In *Table 1* below we can see the remaining design specs as found in the *FIR_Filter/Supporting Documentation/Project.pdf*.
 
 | Parameter | Value |
 |---|---|
-| Filter type | Lowpass, linear phase (Type I*) |
+| Filter type | Lowpass, linear phase (Type I) |
 | Number of taps | 100, increase if needed |
 | Passband edge | 0.20 × Nyquist |
 | Stopband edge | 0.23 × Nyquist |
@@ -19,7 +19,7 @@ The project specification baseline was set at 100 taps. As we will see in the de
 *Not a project requirement, but ideally the ripple is small to ensure signal integrity.
 
 ### 1.2 Motivation
-What made this project rewarding and kept me most engaged was not just the FIR filter itself (though seeing the digital output in the waveforms was interesting). The real motivation came from reasoning through where I could simplify the circuit, reduce area, shorten the critical path, and restructure the design to push performance further. That process became the most valuable part of the project because the implementation work forced the course concepts to become concrete.
+What made this project rewarding and kept me most engaged was not just the FIR filter itself, although seeing the digital output appear correctly in the waveforms was satisfying. The real motivation came from reasoning through where the circuit could be simplified, where area could be reduced, how the critical path could be shortened, and how the overall structure could be reorganized to push performance further. That process became the most valuable part of the project because the implementation work forced the course concepts to become concrete.
 
 ## 2. Repository Structure
 
@@ -28,14 +28,14 @@ Advanced_VLSI/
 ├── FIR_Filter/
 │   ├── coding/
 │   │   ├── verilog/
-│   │   │   ├── fir_basic.sv                 ← Direct-form FIR
-│   │   │   ├── fir_pipelined.sv             ← Pipelined adder-tree FIR
-│   │   │   ├── fir_parallel_L2.sv           ← L=2 parallel (polyphase) FIR
-│   │   │   ├── fir_parallel_L3.sv           ← L=3 parallel (polyphase) FIR
-│   │   │   ├── fir_parallel_L3_pipelined.sv ← L=3 parallel + pipelined adder trees
-│   │   │   ├── fir_mcm.sv                   ← MCM (CSD shift-add) direct-form FIR
-│   │   │   ├── fir_mcm_pipelined.sv         ← MCM + pipelined adder tree
-│   │   │   ├── tb_fir*.sv                   ← Testbenches (one per architecture)
+│   │   │   ├── fir_basic.v                  ← Direct-form FIR
+│   │   │   ├── fir_pipelined.v              ← Pipelined adder-tree FIR
+│   │   │   ├── fir_parallel_L2.v            ← L=2 parallel (polyphase) FIR
+│   │   │   ├── fir_parallel_L3.v            ← L=3 parallel (polyphase) FIR
+│   │   │   ├── fir_parallel_L3_pipelined.v  ← L=3 parallel + pipelined adder trees
+│   │   │   ├── fir_mcm.v                    ← MCM (CSD shift-add) direct-form FIR
+│   │   │   ├── fir_mcm_pipelined.v          ← MCM + pipelined adder tree
+│   │   │   ├── tb_fir*.v                    ← Testbenches (one per architecture)
 │   │   │   └── quartus/                     ← Quartus project files, SDC, STA scripts
 │   │   └── matlab/
 │   │       ├── FIR_Filter_Project.m         ← MATLAB design + quantization script
@@ -50,53 +50,33 @@ Advanced_VLSI/
 ## 3. MATLAB Filter Design
 
 ### 3.1 Floating-Point Design
-- `firpm` [2] with auto-tuned tap count and weights; band edges `[0 0.20 0.23 1]`.
-- Final design: 192 taps (order 191), stopband weight 313.7. This is 
+The filter was designed in firpm [2] using auto-tuned tap count and weighting, with normalized band edges of [0, 0.20, 0.23, 1]. The final design used 192 taps (order 191) with a stopband weight of 313.7. This configuration provided enough design freedom to meet the attenuation target after quantization, whereas the lower-tap starting point did not.
 
 ### 3.2 Coefficient Quantization
-- Word-length sweep (Q = 14 to 24 bits) to find the minimum Q that preserves ≥ 80 dB stopband after rounding.
-- Selected: Q = 20 bits (21-bit signed coefficients).
-- Side-by-side floating-point vs. quantized magnitude response:
+To determine the minimum usable coefficient precision, I ran a word-length sweep from 𝑄=14 to 24 bits and checked which cases still preserved at least 80 dB of stopband attenuation after rounding. The first setting that met the requirement was 𝑄=20, giving 21-bit signed coefficients. I then overlaid the floating-point and quantized magnitude responses to confirm that the quantized filter still tracked the intended design closely.
 
 ![Quantization Sweep](coding/matlab/plots/quantization_sweep.png)
 
 #### Quantization Sensitivity and Coefficient Weights
+The firpm design [2] is very effective at generating the required coefficients with relatively little manual calculation. However, it also produces a wide coefficient spread. At one end, the coefficients are as small as 153, while near the middle they reach 216,278. Quantization does not account for that spread. One LSB is still one LSB, so the smaller coefficients experience a much larger relative error. A one-step rounding error on h(0) is significant, while the same one-step error on ℎ(95) is almost negligible. Unfortunately, the coefficients affected first are often the ones contributing to the more delicate behavior near the transition edge and the stopband nulls.
 
-The `firpm` design [2] is very effective at generating the required coefficients with little math work to be done.  But asleaves behind a nasty coefficient spread. At one end I have values like 153. Near the middle I am up at 216,278. Quantization, unfortunately, is blind to that. One LSB is still one LSB, so the little coefficients get hit much harder in relative terms. A one-step rounding error on h(0) is noticeable. The same one-step error on h(95) barely matters. Naturally, the coefficients that get hurt first are also the ones doing a lot of the delicate work around the transition edge and stopband nulls.
+The Q-sweep makes this clear quickly. At Q=16, the design is not sufficient, with the stopband attenuation falling to about 72 dB. At Q=18, performance improves to roughly 78 dB, but it still misses the target. Q=20 is the first point at which the quantized design exceeds the 80 dB requirement, reaching 80.13 dB. That is where the design was finalized. The choice of 192 taps was not immediate. I began with 100 taps because that was the baseline allowed by the specification, with the option to increase the count if necessary. It was necessary. A 0.20𝜋 to 0.23π transition band combined with an 80 dB stopband target did not leave enough design margin at 100 taps, so I built a MATLAB sweep to identify a more suitable configuration. At 192 taps, the optimizer had more freedom, the stopband weight dropped to 313.7, and the quantized coefficients became much more manageable. Of course, that created a different problem: more hardware. More taps mean more multipliers, more delay storage, and a longer summation path. That is where the structural optimizations became important.
 
-The Q-sweep tells the story pretty quickly. Q = 16 is not enough; the stopband drops to about 72 dB. Q = 18 is better, around 78 dB, but still not there. Q = 20 is the first point where the quantized design actually gets back over the line at 80.13 dB. So that is where I stopped.
+Symmetric pre-adds halve the multiplier count, reducing it from 192 to 96. Polyphase decomposition with 𝐿=2 and 𝐿=3 splits the filter into smaller subfilters of 96 and 64 taps, shortening each channel’s adder tree. Pipelined adder trees break the 7-level combinational tree into registered stages with one adder per stage, which pushes 𝐹𝑚𝑎𝑥 much higher. MCM with CSD replaces DSP multipliers with shift-add networks. This avoids hard macros, but increases ALM routing cost.
 
-I did not land on 192 taps immediately. The starting point was 100 taps because that was what the spec allowed as a baseline, with more taps if they turned out to be necessary. They were. A 0.20π to 0.23π transition band with an 80 dB stopband target just did not leave enough room at 100 taps, so I ended up building a sweep in MATLAB and using that to narrow in on a better configuration. At 192 taps the optimizer had more room, the stopband weight came down to 313.7, and the quantized coefficients stopped fighting me so much. Of course that creates a different problem: more hardware. More taps means more multiplies, more delay storage, and a longer sum path. That is where the structural work became important.
-
-- Symmetric pre-adds halve the multiplier count (192 down to 96).
-- Polyphase decomposition (L=2 and L=3) splits the filter into smaller sub-filters (96-tap and 64-tap), which shortens each channel's adder tree.
-- Pipelined adder trees break the 7-level combinational tree into registered single-add stages, pushing Fmax much higher.
-- MCM with CSD replaces DSP multipliers with shift-add networks. No hard macros needed, but you pay for it in ALM wiring.
-
-That same trade-off kept coming back. If I tried to make the arithmetic cleaner, the structure usually got heavier. If I tried to simplify the hardware, something else got harder. A lot of the learning in this project came from working through that back and forth rather than expecting a single obvious answer.
+The same trade-off appeared repeatedly throughout the project. When I tried to make the arithmetic cleaner, the structure usually became heavier. When I tried to simplify the hardware, something else became harder. Much of the learning in this project came from working through that back-and-forth process rather than expecting a single obvious solution.
 
 ### 3.3 Filter Response
-
 ![Filter Response](coding/matlab/plots/filter_response.png)
-
 | Metric | Float | Quantized (Q=20) |
 |---|---|---|
 | Stopband attenuation | 80.61 dB | 80.13 dB |
 | Passband ripple | 0.50 dB | 0.50 dB |
 
-### 3.4 Coefficient Symmetry
-- Linear-phase Type I symmetry verified: `b(k) == b(193−k)` for all 96 pairs.
-- Only 96 unique multipliers needed, half of the 192 taps.
+### 3.4 Accumulator Overflow Analysis
+A 16-bit signed input multiplied by a 21-bit signed coefficient yields a 37-bit signed product. In the worst case, accumulation reaches 74,676,844,942, which requires a 38-bit internal accumulator to prevent overflow and preserve numerical correctness through the linear-phase computation.  Since most system interfaces use standard fixed word sizes, two options were considered: either widening the external output to 64 bits, which would waste a significant portion of the available range, or keeping a 32-bit signed output and saturating the final result.  This approach preserves safe internal arithmetic while maintaining compatibility with a narrower system interface. The main hardware cost is unchanged, because the 38-bit value must still propagate through the adder tree internally. The only difference is at the output boundary, where the result is saturated to 32 bits instead of exporting the full internal width.
 
-### 3.5 Accumulator Overflow Analysis
-- 16-bit signed input × 21-bit signed coefficients = 37-bit product.
-- Worst-case accumulator value: 74,676,844,942, which needs 38 bits.
-- Overflow is impossible with this width. No saturation or clipping logic needed.
-
-The safe answer is easy: size the accumulator for the absolute worst case and be done with it. No saturation, no clipping, no wrap-around to think about. Just carry enough bits that nothing bad can happen. It is clean, and it works. It also means those 38 bits have to pass through the whole adder tree, which is where the area and routing penalties come from.
-
-## 4. SystemVerilog Implementation
-
+## 4. Verilog Implementation
 I kept the ModelSim flow the same for all seven architectures. That made comparison much easier. Every testbench has two phases so I can check both the impulse-response sequence and the steady-state DC behavior:
 
 | Parameter | Value |
@@ -119,7 +99,13 @@ Loop iterations scale by architecture to allow complete output flushing:
 
 Multi-channel designs (L=2, L=3) feed de-interleaved inputs: the impulse goes into channel 0 only (`din_0 = 1`, others zero), and the step drives all channels equally (`din_k = 1000`). Output verification checks that the interleaved coefficient sequence across channels reconstructs the original 192-tap impulse response exactly.
 
-### 4.1 Direct-Form FIR (`fir_basic.sv`)
+To compile all variants quickly in a shell environment:
+
+Quartus: Set-Location "[Path to project folder]\quartus"; $quartus = "[Path to quartus shell]\quartus_sh.exe"; $revisions = @('fir_basic','fir_pipelined','fir_parallel_L2','fir_parallel_L3','fir_parallel_L3_pipelined','fir_mcm','fir_mcm_pipelined'); foreach ($rev in $revisions) { & $quartus --flow compile "$rev"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } 
+
+ModelSim:  
+
+### 4.1 Direct-Form FIR (`fir_basic.v`)
 
 This is the baseline implementation, just a straightforward FIR realization:
 
@@ -133,7 +119,7 @@ So the structure is simple: 96 pre-adds, 96 multiplies, then one combinational t
 
 This one behaved exactly like the baseline should. The 192-sample impulse response matched the coefficient set, the symmetric pairs lined up, and the step response settled to 1,018,790,000 = `sum(coeff) × 1000`. That works out to a DC gain of about 0.972, or −0.25 dB, so it still sits safely inside the 0.5 dB passband limit. Overflow never gets close.
 
-### 4.2 Pipelined FIR (`fir_pipelined.sv`)
+### 4.2 Pipelined FIR (`fir_pipelined.v`)
 
 The front half is the same as `fir_basic`. All I changed was the reduction path for the 96 products.
 
@@ -147,7 +133,7 @@ After 7 stages, $s_7(0)$ is the final sum. Counting the product register, that a
 
 Functionally, this one does not do anything new. The impulse and step outputs are bit-identical to `fir_basic`; they just show up later in time. `dout_valid` moves from 85 ns to 165 ns, and the coefficient sequence itself stays unchanged.
 
-### 4.3 L=2 Parallel FIR (`fir_parallel_L2.sv`)
+### 4.3 L=2 Parallel FIR (`fir_parallel_L2.v`)
 
 #### Polyphase Decomposition
 
@@ -191,7 +177,7 @@ That takes the multiplier count from a naive 384 down to 192. So the L=2 version
 
 Latency-wise, L=2 still looks like the basic design because there is only one output register stage. The gain is throughput. Two samples come out each clock, so the simulation finishes much sooner and the VCD shrinks because the same 192 outputs flush in fewer cycles.
 
-### 4.4 L=3 Parallel FIR (`fir_parallel_L3.sv`)
+### 4.4 L=3 Parallel FIR (`fir_parallel_L3.v`)
 
 #### Polyphase Decomposition (L = 3)
 
@@ -254,7 +240,7 @@ All three channels checked out. The impulse response rebuilds the original coeff
 
 
 
-### 4.5 L=3 Parallel + Pipelined FIR (`fir_parallel_L3_pipelined.sv`)
+### 4.5 L=3 Parallel + Pipelined FIR (`fir_parallel_L3_pipelined.v`)
 
 This one is just the L=3 structure with the long per-channel reduction tree broken into pipeline stages. The pre-adds, symmetry reuse, and multiplier sharing all stay the same [3].
 
@@ -315,7 +301,7 @@ Cumulative VCD sizes across all architectures:
 
 If I only looked at simulation time, I could talk myself into preferring the non-pipelined L3. That would be the wrong conclusion. Both testbenches run at the same fixed 100 MHz clock, so simulation hides the real issue. On hardware, Fmax matters more than how fast a testbench transcript scrolls by, and the pipelined tree wins there for obvious reasons.
 
-### 4.6 MCM Direct-Form FIR (`fir_mcm.sv`)
+### 4.6 MCM Direct-Form FIR (`fir_mcm.v`)
 
 This is the version where I give the DSP blocks back and pay for it in logic instead. Every multiplier in `fir_basic` becomes a Canonic Signed Digit shift-add network [3].
 
@@ -347,7 +333,7 @@ Everything is identical to `fir_basic` except the multiply stage:
 
 1. Delay line: 192-tap shift register (same as basic)
 2. Symmetric pre-adds: 96 adders folding $\text{tap}[k] + \text{tap}[191{-}k]$ (same)
-3. Products: CSD shift-add networks instead of DSP multipliers. Each `preadd[k]` is sign-extended to 38 bits, then shifted and added/subtracted per the CSD decomposition.
+3. Products: CSD shift-add networks instead of DSP multipliers. Each `preadd[k]` is sign-extended to the 38-bit internal accumulator width, then shifted and added/subtracted per the CSD decomposition.
 4. Adder tree: 7-level binary tree, pad-to-128 (same)
 5. Output register: 1-cycle latency (same)
 
@@ -372,7 +358,7 @@ The downside is pretty obvious in the synthesis results. Giving up 96 DSP blocks
 
 So where would I actually use this? Mostly in a design where DSP blocks are tight or already reserved for something else. On this Cyclone V it is mainly a comparison point. On a smaller part, it could be the practical answer.
 
-### 4.7 MCM Pipelined FIR (`fir_mcm_pipelined.sv`)
+### 4.7 MCM Pipelined FIR (`fir_mcm_pipelined.v`)
 
 Same CSD shift-add products as `fir_mcm`, but with the 7-stage registered adder tree from `fir_pipelined` instead of a single combinational pass. Eight extra clock cycles of latency, same as the DSP pipelined variant.
 
@@ -399,7 +385,7 @@ Timing constraint: 100 MHz target clock (`fir.sdc` in `coding/verilog/quartus/`)
 
 For the non-pipelined versions, explicit combinational reduction trees were necessary. If left alone, Quartus tried to infer DSP accumulation chains longer than the Cyclone V limit of 22 blocks. That path went nowhere.
 
-### 5.3 38-Bit Accumulator Results
+### 5.3 38-Bit Internal Accumulator Results
 
 | Architecture | Area (ALMs) | Registers | DSP Blocks | Fmax (MHz) | Throughput (Msps) |
 |---|---|---|---|---|---|
@@ -489,7 +475,7 @@ One important caveat: these are not activity-driven estimates. They are good eno
 
 ### 6.1 Architecture Comparison
 
-Putting everything on the same throughput-efficiency footing makes the trade-offs easier to see. The numbers below use the 38-bit accumulator results because that is also the set where the power estimates were run.
+Putting everything on the same throughput-efficiency footing makes the trade-offs easier to see. The numbers below use the 38-bit internal-accumulator results, which still match the current RTL because only the external interface was narrowed to 32 bits and saturated.
 
 | Architecture | Fmax (MHz) | Throughput (Msps) | ALMs | DSPs | Dynamic Power (mW) | Throughput/ALM (Ksps/ALM) | Throughput/mW (Msps/mW) |
 |---|---|---|---|---|---|---|---|
@@ -539,4 +525,4 @@ Selected topic: Viterbi decoder, high-performance VLSI architecture and RTL impl
 
 ## 9. Acknowledgements
 
-GitHub Copilot was mostly useful here for speed. Fourteen separate Quartus runs is a lot of repetitive compile-check-report work, and it helped me move through that loop faster, catch any obvious warning or error issues, and sort through the timing and area reports without doing every pass manually. The actual design choices, RTL, and analysis are still mine. It mainly made the repetitive parts less tedious.
+GitHub Copilot was used primarily to improve efficiency. Because this work required seven separate Quartus runs, there was a significant amount of repetitive compile-check-report effort. Copilot helped accelerate that workflow by assisting with routine iteration, identifying obvious warnings or errors, and helping review timing and area reports. However, the underlying design decisions, RTL development, and analysis were my own. Its role was limited to reducing the overhead of repetitive tasks.
