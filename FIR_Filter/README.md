@@ -101,7 +101,7 @@ Multi-channel designs (L=2, L=3) feed de-interleaved inputs: the impulse goes in
 
 To compile all variants quickly in a shell environment:
 
-Quartus: Set-Location "[Path to project folder]\quartus"; $quartus = "[Path to quartus shell]\quartus_sh.exe"; $revisions = @('fir_basic','fir_pipelined','fir_parallel_L2','fir_parallel_L3','fir_parallel_L3_pipelined','fir_mcm','fir_mcm_pipelined'); foreach ($rev in $revisions) { & $quartus --flow compile "$rev"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } } 
+Quartus: Set-Location `"[Path to project folder]\quartus"; $quartus = "[Path to quartus shell]\quartus_sh.exe"; $revisions = @('fir_basic','fir_pipelined','fir_parallel_L2','fir_parallel_L3','fir_parallel_L3_pipelined','fir_mcm','fir_mcm_pipelined'); foreach ($rev in $revisions) { & $quartus --flow compile "$rev"; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }`
 
 ModelSim:  
 
@@ -117,40 +117,39 @@ $$y(n) = \sum_{k=0}^{95} h(k) \,\bigl[\,x(n-k) + x(n-(191-k))\,\bigr]$$
 ### 4.2 Pipelined FIR (`fir_pipelined.v`)
 The front-end structure is unchanged from `fir_basic`. The only modification is in the reduction path for the 96 products. In `fir_basic`, all 96 products are reduced through a single combinational adder tree that is 7 levels deep and padded to 128 entries. This approach works, but it requires the entire tree to settle within a single clock period. The pipelined version [3] instead inserts a register after every tree level, so each stage contains only a single two-input addition, as shown in *Equations 3* and *4*. After 7 adder stages, \(s_7(0)\) produces the final sum.  Including the product register, this adds a total latency of 8 cycles. In exchange, timing closure becomes much easier while throughput remains at 1 sample per clock. Functionally, this architecture does not change the filter output. The impulse and step responses are bit-identical to those of `fir_basic`; they simply appear later in time. Accordingly, `dout_valid` shifts from 85 ns to 165 ns, while the coefficient sequence itself remains unchanged.
 
-$$s_0(i) = \begin{cases} \text{product}(i) & 0 \le i < 96 \\ 0 & 96 \le i < 128 \end{cases}$$
+$$s_0(i) =  \text{product}(i) & 0 \le i < 96 \\ 0 & 96 \le i < 128$$
 (Equation 3)
 
 $$s_{m+1}(i) = \text{reg}\bigl[\,s_m(2i) + s_m(2i{+}1)\,\bigr], \qquad m = 0,\dots,6$$
 (Equation 4)
 
 ### 4.3 L=2 Parallel FIR (`fir_parallel_L2.v`)
-
 #### Polyphase Decomposition
 Decompose the transfer function into even and odd polyphase components in *Equation 5*[3] where each sub-filter has $N/2 = 96$ taps in *Equation 6*. The two output samples per clock cycle are calculated in *Equations 7* and *8*, where $x_0(n) = x(2n)$ (even input stream) and $x_1(n) = x(2n{+}1)$ (odd input stream).
 
 $$H(z) = H_e(z^2) + z^{-1}\,H_o(z^2)$$
-(Equation 5)
+*(Equation 5)*
 
 $$H_e(z) = \sum_{j=0}^{95} h(2j)\,z^{-j}, \qquad H_o(z) = \sum_{j=0}^{95} h(2j{+}1)\,z^{-j}$$
-(Equation 6)
+*(Equation 6)*
 
 $$y(2n)   = \sum_{j=0}^{95} h_e(j)\,x_0(n{-}j) \;+\; \sum_{j=0}^{95} h_o(j)\,x_1(n{-}1{-}j)$$
-(Equation 7)
+*(Equation 7)*
 
 $$y(2n{+}1) = \sum_{j=0}^{95} h_e(j)\,x_1(n{-}j) \;+\; \sum_{j=0}^{95} h_o(j)\,x_0(n{-}j)$$
-(Equation 8)
+*(Equation 8)*
 
 #### Symmetry-Based Multiplier Reduction
 From the original linear-phase symmetry $h(k) = h(191{-}k)$ we can see in *Equation 9*, $H_o$ is $H_e$ time-reversed. Substituting $h_o(j) = h_e(95{-}j)$ and re-indexing the odd sums lets us form cross pre-adds that share the same coefficient sets in *Equations 10* and *11*.  That takes the multiplier count from a naive 384 down to 192. So the L=2 version really does buy two outputs per clock without paying the full brute-force duplication cost.
 
 $$h_e(j) = h(2j), \qquad h_o(j) = h(2j{+}1) = h(191{-}(2j{+}1)) = h(2(95{-}j)) = h_e(95{-}j)$$
-(Equation 9)
+*(Equation 9)*
 
 $$y(2n)   = \sum_{j=0}^{95} h_e(j)\,\bigl[\,x_0(n{-}j) + x_1(n{-}96{+}j)\,\bigr]$$
-(Equation 10)
+*(Equation 10)*
 
 $$y(2n{+}1) = \sum_{j=0}^{95} h_e(j)\,\bigl[\,x_1(n{-}j) + x_0(n{-}95{+}j)\,\bigr]$$
-(Equation 11)
+*(Equation 11)*
 
 | Test | Result |
 |---|---|
@@ -160,30 +159,27 @@ $$y(2n{+}1) = \sum_{j=0}^{95} h_e(j)\,\bigl[\,x_1(n{-}j) + x_0(n{-}95{+}j)\,\big
 Latency-wise, L=2 still looks like the basic design because there is only one output register stage. The gain is throughput. Two samples come out each clock, so the simulation finishes much sooner and the VCD shrinks because the same 192 outputs flush in fewer cycles.
 
 ### 4.4 L=3 Parallel FIR (`fir_parallel_L3.v`)
-
 #### Polyphase Decomposition (L = 3)
 
-Decompose $H(z)$ into three polyphase branches [3]:
+Decompose $H(z)$ into three polyphase branches [3] seen in *Equation 12*, where each sub-filter has $\lceil N/3 \rceil = 64$ taps as seen in *Equation 13*.  The three output samples per clock cycle are computed as seen in *Equation 14*, writing it out explicitly with $x_0(n) = x(3n)$, $x_1(n) = x(3n{+}1)$, $x_2(n) = x(3n{+}2)$ we obtain the polyphase *Equations 15, 16* and *17*, where $*$ denotes convolution with the respective polyphase sub-filter.
 
 $$H(z) = H_0(z^3) + z^{-1}\,H_1(z^3) + z^{-2}\,H_2(z^3)$$
-
-where each sub-filter has $\lceil N/3 \rceil = 64$ taps:
+(*Equation 12*)
 
 $$H_p(z) = \sum_{j=0}^{63} h(3j{+}p)\,z^{-j}, \qquad p = 0, 1, 2$$
-
-The three output samples per clock cycle are computed as:
+(*Equation 13*)
 
 $$y(3n)     = \sum_{p=0}^{2} \sum_{j=0}^{63} h_p(j)\,x_{(0-p)\bmod 3}(n - j - \lfloor p/3 \rfloor')$$
-
-Writing it out explicitly with $x_0(n) = x(3n)$, $x_1(n) = x(3n{+}1)$, $x_2(n) = x(3n{+}2)$:
+(*Equation 14*)
 
 $$y(3n)     = H_0 * x_0(n) \;+\; H_1 * x_2(n{-}1) \;+\; H_2 * x_1(n{-}1)$$
+(*Equation 15*)
 
 $$y(3n{+}1) = H_0 * x_1(n) \;+\; H_1 * x_0(n)     \;+\; H_2 * x_2(n{-}1)$$
+(*Equation 16*)
 
 $$y(3n{+}2) = H_0 * x_2(n) \;+\; H_1 * x_1(n)     \;+\; H_2 * x_0(n)$$
-
-where $*$ denotes convolution with the respective polyphase sub-filter.
+(*Equation 17*)
 
 #### Multiplier Count
 
