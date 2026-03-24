@@ -25,7 +25,7 @@ module fir_basic #(
 );
 
     // Number of unique coefficients (symmetric)
-    localparam HALF = NUM_TAPS / 2;  // 50
+    localparam HALF = NUM_TAPS / 2;
 
     // Pre-add width: one extra bit for the addition of two W_IN values
     localparam W_PREADD = W_IN + 1;

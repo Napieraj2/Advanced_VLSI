@@ -151,9 +151,7 @@ $$y(n) = \sum_{k=0}^{95} h(k) \,\bigl[\,x(n-k) + x(n-(191-k))\,\bigr]$$
 ### 4.2 Pipelined FIR (`fir_pipelined.v`)
 The front-end structure is unchanged from `fir_basic`. The only modification is in the reduction path for the 96 products. In `fir_basic`, all 96 products are reduced through a single combinational adder tree that is 7 levels deep and padded to 128 entries. This approach works, but it requires the entire tree to settle within a single clock period. The pipelined version [3] instead inserts a register after every tree level, so each stage contains only a single two-input addition, as shown in *Equations 3* and *4*. After 7 adder stages, \(s_7(0)\) produces the final sum. Including the product register, this adds a total latency of 8 cycles. In exchange, timing closure becomes much easier while throughput remains at 1 sample per clock. Functionally, this architecture does not change the filter output. The impulse and step responses are bit-identical to those of `fir_basic`; they simply appear later in time. Accordingly, `dout_valid` shifts from 85 ns to 165 ns, while the coefficient sequence itself remains unchanged.
 
-$$s_0(i) = \mathtt{product}(i), \qquad 0 \le i < 96$$
-
-$$s_0(i) = 0, \qquad 96 \le i < 128$$
+$$s_0(i) = \mathtt{product}(i) \text{ for } 0 \le i < 96, \qquad s_0(i) = 0 \text{ for } 96 \le i < 128$$
 (*Equation 3*)
 
 $$s_{m+1}(i) = reg[s_m(2i) + s_m(2i{+}1)], \qquad m = 0, \ldots, 6$$
@@ -222,10 +220,10 @@ $$h_0(j) = h(3j), \qquad h_2(j) = h(3j{+}2) = h(191{-}(3j{+}2)) = h(3(63{-}j)) =
 (*Equation 18*)
 
 ##### *Polyphase Equations*
-$$y(3n) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl0}[j] + \mathtt{dl1}[63{-}j]\bigr] + (H_1 \text{ term})$$
+$$y(3n) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl0}[j] + \mathtt{dl1}[64{-}j]\bigr] + (H_1 \text{ term})$$
 (*Equation 19*)
 
-$$y(3n{+}1) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl1}[j] + \mathtt{dl2}[63{-}j]\bigr] + (H_1 \text{ term})$$
+$$y(3n{+}1) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl1}[j] + \mathtt{dl2}[64{-}j]\bigr] + (H_1 \text{ term})$$
 (*Equation 20*)
 
 $$y(3n{+}2) = \sum_{j=0}^{63} h_0(j)\bigl[\mathtt{dl2}[j] + \mathtt{dl0}[63{-}j]\bigr] + (H_1 \text{ term})$$
@@ -368,14 +366,6 @@ For the non-pipelined versions, explicit combinational reduction trees were nece
 ### 5.3 38-Bit Internal Accumulator Results
 *Table 11* collects the main post-fit area and timing results for all seven FIR architectures. \(F_{\max}\) was calculated from the worst-case setup slack \(s\), in ns, using *Equation 29* under the Slow 1100 mV, 85 \(^\circ\)C timing model, which represents the worst-case operating corner.
 
-For the direct-form architecture, the setup slack was \(-15.832\) ns, giving \(F_{\max} = 1000 / 25.832 = 38.7\) MHz.  
-For the pipelined architecture, the setup slack improved to \(-7.038\) ns, giving \(F_{\max} = 1000 / 17.038 = 58.7\) MHz.  
-For the MCM direct-form architecture, the setup slack was \(-20.093\) ns, which gives \(F_{\max} = 1000 / 30.093 = 33.2\) MHz.  
-For the pipelined MCM architecture, the setup slack was \(-7.074\) ns, giving \(F_{\max} = 1000 / 17.074 = 58.6\) MHz.  
-For the \(L=2\) parallel architecture, the setup slack was \(-16.984\) ns, giving \(F_{\max} = 1000 / 26.984 = 37.1\) MHz. Since this version produces two output samples per clock, its throughput is 2 x 37.1 = 74.1 Msps.  
-For the \(L=3\) parallel architecture, the setup slack was \(-17.465\) ns, giving \(F_{\max} = 1000 / 27.465 = 36.4\) MHz. Because it produces three output samples per clock, its throughput is 3 x 36.4 = 109.2 Msps.  
-For the pipelined \(L=3\) architecture, the setup slack was \(-7.166\) ns, giving \(F_{\max} = 1000 / 17.166 = 58.3\) MHz. With three output samples per clock, its throughput is 3 x 58.3 = 174.8 Msps.
-
 | Architecture | Area (ALMs) | Registers | DSP Blocks | Fmax (MHz) | Throughput (Msps) |
 |---|---|---|---|---|---|
 | Direct-form | 1,125 | 3,731 | 96 | 38.7 | 38.7 |
@@ -435,9 +425,7 @@ One important caveat is that these are not activity-driven power estimates. They
 ## 6. Further Analysis and Conclusion
 
 ### 6.1 Architecture Comparison
-Putting all of the architectures on the same throughput-efficiency basis makes the trade-offs much easier to compare. *Table 14* compiles the derived efficiency metrics using the 38-bit internal accumulator results. The clearest result from the table is straightforward: once the filter reaches this size, pipelining is no longer optional. Whether the implementation uses DSP blocks, MCM, or polyphase parallelism, the same pattern appears. The pipelined versions cluster tightly between about 58.3 and 58.7 MHz, while the non-pipelined versions remain limited to the low-to-high 30 MHz range because the reduction tree dominates the critical path.
-
-Polyphase parallelism behaves largely as expected. Throughput scales nearly linearly with the parallel factor, while per-channel timing stays in roughly the same range. The non-pipelined \(L=2\) and \(L=3\) designs look especially strong in throughput per ALM because they avoid the additional register overhead required by deep pipelines. If the goal is maximum raw throughput, the pipelined \(L=3\) design is the strongest option, but it achieves that performance with a clear area and power cost.
+Putting all of the architectures on the same throughput-efficiency basis makes the trade-offs much easier to compare. *Table 14* compiles the derived efficiency metrics using the 38-bit internal accumulator results. The clearest result from the table is straightforward: once the filter reaches this size, pipelining is no longer optional. Whether the implementation uses DSP blocks, MCM, or polyphase parallelism, the same pattern appears. The pipelined versions cluster tightly between about 58.3 and 58.7 MHz, while the non-pipelined versions remain limited to the low-to-high 30 MHz range because the reduction tree dominates the critical path. Polyphase parallelism behaves largely as expected. Throughput scales nearly linearly with the parallel factor, while per-channel timing stays in roughly the same range. The non-pipelined \(L=2\) and \(L=3\) designs look especially strong in throughput per ALM because they avoid the additional register overhead required by deep pipelines. If the goal is maximum raw throughput, the pipelined \(L=3\) design is the strongest option, but it achieves that performance with a clear area and power cost.
 
 MCM with CSD ends up occupying a more specialized part of the design space. It performs worse in ALM usage, but better in DSP usage, and it ended up more power-efficient than I initially expected. That makes it appealing in cases where preserving DSP blocks matters more than minimizing logic consumption. It also still feels like an unfinished optimization opportunity in a productive sense. The repeated CSE patterns identified in Section 4.6 suggest that a more sophisticated optimizer could likely reduce the shift-add count further.
 
@@ -454,16 +442,14 @@ MCM with CSD ends up occupying a more specialized part of the design space. It p
 *TABLE 14: Architecture Efficiency Comparison*
 
 ### 6.2 Hybrid MCM-DSP Architecture (Future Work)
-One architecture I did not implement, but would like to explore next, is a hybrid multiplier mapping strategy. In that approach, small-magnitude coefficients with low nonzero digit (NZD) count would remain in CSD-based shift-add fabric, while the larger coefficients would be mapped to DSP blocks. For example, a coefficient such as \(h(6) = 136 = 2^3 + 2^7\) requires only two shift-add terms and is very inexpensive to keep in logic. In contrast, a coefficient such as \(h(95) = 216{,}278\), with 9 nonzero digits and 8 cascaded add operations, is a much stronger candidate for DSP implementation.
+One architecture I did not implement, but would like to explore next, is a hybrid multiplier-mapping strategy. In this approach, small-magnitude coefficients with low nonzero digit (NZD) count would remain in CSD-based shift-add fabric, while larger coefficients would be mapped to DSP blocks. For example, a coefficient such as \(h(6) = 136 = 2^3 + 2^7\) requires only two shift-add terms and is therefore inexpensive to implement in logic. In contrast, a coefficient such as \(h(95) = 216{,}278\), with 9 nonzero digits and 8 cascaded add operations, is a much stronger candidate for DSP implementation.
 
-A hybrid partition like this could reduce ALM usage relative to the pure MCM design by offloading the most expensive shift-add chains into DSP blocks. At the same time, it could reduce DSP usage relative to the pure DSP design by keeping the simplest coefficients in fabric. In this design, roughly 30 coefficients have NZD \(\leq 3\), which means they can be realized with only one or two adders each and are likely much cheaper than assigning an entire DSP block. This approach could also improve timing, since the longest CSD chains currently dominate the critical path and appear to be the main reason the MCM version is limited to about 33.2 MHz.
-
-The partitioning rule itself would become its own optimization problem. Choosing the NZD threshold at which a coefficient should move from logic into a DSP would require balancing ALM usage, DSP usage, dynamic power, and timing closure. That makes this a natural next step emerging from the current project.
+A hybrid partition like this could reduce ALM usage relative to the pure MCM design by offloading the most expensive shift-add chains into DSP blocks. At the same time, it could reduce DSP usage relative to the pure DSP design by keeping the simplest coefficients in fabric. In this design, roughly 30 coefficients have NZD \(\leq 3\), meaning they can be realized with only one or two adders each and are likely much cheaper than consuming a dedicated DSP block. This approach could also improve timing, since the longest CSD chains currently dominate the critical path and appear to be the main reason the MCM version is limited to about 33.2 MHz. The partitioning rule would itself become an optimization problem. Choosing the NZD threshold at which a coefficient should move from logic into a DSP would require balancing ALM usage, DSP usage, dynamic power, and timing closure. That makes this a natural next step following the current project.
 
 ### 6.3 Conclusion
-By the end of the project, it felt like much more than just building an FIR filter. It became an exercise in repeatedly asking how much farther the same design could be pushed through better structural decisions. Quantization was manageable, but only after I stopped treating it as a secondary detail. \(Q=20\) turned out to be the point where the stopband target survived rounding without making the coefficients any wider than necessary. Reaching that point by moving beyond the 100-tap baseline made the numerical side of the problem easier, but it also made the hardware side more demanding. For timing, pipelining was by far the strongest lever. Once the reduction tree was broken into registered stages, all of the pipelined versions converged to roughly 58.3 to 58.7 MHz. Without pipelining, the long combinational summation path kept \(F_{\max}\) in the 33 to 39 MHz range. In that sense, the timing data made the design decision difficult to argue against. Polyphase decomposition was the cleanest way I found to increase throughput. The non-pipelined \(L=3\) version in particular delivers a large throughput gain for the amount of hardware it uses. That was one of the clearest moments where a course concept stopped being just a block diagram and became something measurable that I could compare directly.
+By the end of the project, it felt like much more than just building an FIR filter. It became an exercise in repeatedly asking how much farther the same design could be pushed through better structural decisions. Quantization was manageable, but only after I stopped treating it as a secondary detail. \(Q = 20\) turned out to be the point where the stopband target survived rounding without making the coefficients any wider than necessary. Reaching that point by moving beyond the 100-tap baseline made the numerical side of the problem easier, but it also made the hardware side more demanding.
 
-The MCM/CSD approach also proved to be more than a side curiosity. It gives up timing and logic area, but it eliminates DSP usage entirely and does so with the lowest dynamic power in the design set. Working through those trade-offs, especially where area could be reduced or critical path depth could be shortened, was a large part of what made the project rewarding from a learning perspective.
+For timing, pipelining was by far the strongest lever. Once the reduction tree was broken into registered stages, all of the pipelined versions converged to roughly 58.3 to 58.7 MHz. Without pipelining, the long combinational summation path kept \(F_{\max}\) in the 33 to 39 MHz range. In that sense, the timing data made the design choice difficult to argue against.The non-pipelined \(L = 3\) version in particular delivers a large throughput gain for the amount of hardware it uses. The MCM/CSD approach also proved to be more than a side curiosity. It gives up timing and logic area, but it eliminates DSP usage entirely and does so with the lowest dynamic power in the design set. Working through those trade-offs, especially where area could be reduced or critical path depth could be shortened, was a major part of what made the project rewarding from a learning perspective.
 
 ## 7. References
 [1] Course Project Specification: `Supporting_Documentation/Project.pdf`
@@ -473,4 +459,4 @@ The MCM/CSD approach also proved to be more than a side curiosity. It gives up t
 [3] K. K. Parhi, *VLSI Digital Signal Processing Systems: Design and Implementation*, Wiley, 1999, Ch. 8–11.
 
 ## 8. Acknowledgements
-GitHub Copilot was used primarily to improve efficiency. Because this work required seven separate Quartus runs, there was a significant amount of repetitive compile-check-report effort. Copilot helped accelerate that workflow by assisting with routine iteration, identifying obvious warnings or errors, and helping review timing and area reports. However, the underlying design decisions, RTL development, and analysis were my own. Its role was limited to reducing the overhead of repetitive tasks.
+GitHub Copilot was used primarily to improve efficiency. Because this work required seven separate Quartus runs, there was a significant amount of repetitive compile-check-report effort. Copilot helped accelerate that workflow by assisting with routine iteration, identifying obvious warnings or errors, and helping review timing and area reports. However, the underlying design decisions, RTL development, and analysis were my own. Its role was limited to reducing the overhead of repetitive tasks and assisting with minor editorial refinement for clarity.

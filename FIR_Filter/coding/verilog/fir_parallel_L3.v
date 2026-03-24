@@ -140,9 +140,12 @@ module fir_parallel_L3 #(
     // =====================================================================
     //  Delay lines (three polyphase streams)
     // =====================================================================
-    //  dl_0: x_0 stream, 65 elements (needs index 0..63)
-    //  dl_1: x_1 stream, 65 elements (needs index 0..64 for cross pre-adds)
-    //  dl_2: x_2 stream, 65 elements (needs index 0..64 for cross pre-adds)
+    //  All three delay lines are allocated as 65 entries (indices 0..64)
+    //  so the implemented cross pre-add expressions can use the same array
+    //  bounds directly without special-case indexing.
+    //  dl_0: x_0 stream
+    //  dl_1: x_1 stream
+    //  dl_2: x_2 stream
     // =====================================================================
     reg signed [W_IN-1:0] dl_0 [0:SUB_LEN];
     reg signed [W_IN-1:0] dl_1 [0:SUB_LEN];
