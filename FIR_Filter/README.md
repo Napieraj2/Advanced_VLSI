@@ -28,23 +28,18 @@ Advanced_VLSI/
 ├── FIR_Filter/
 │   ├── coding/
 │   │   ├── verilog/
-│   │   │   ├── OVERFLOW_PREVENT/            ← 192-tap, 38-bit accumulator (no overflow possible)
-│   │   │   │   ├── fir_basic.sv             ← Direct-form FIR
-│   │   │   │   ├── fir_pipelined.sv         ← Pipelined adder-tree FIR
-│   │   │   │   ├── fir_parallel_L2.sv       ← L=2 parallel (polyphase) FIR
-│   │   │   │   ├── fir_parallel_L3.sv       ← L=3 parallel (polyphase) FIR
-│   │   │   │   ├── fir_parallel_L3_pipelined.sv ← L=3 parallel + pipelined adder trees
-│   │   │   │   ├── fir_mcm.sv               ← MCM (CSD shift-add) direct-form FIR
-│   │   │   │   ├── fir_mcm_pipelined.sv     ← MCM + pipelined adder tree
-│   │   │   │   ├── tb_fir*.sv               ← Testbenches (one per architecture)
-│   │   │   │   └── quartus/                 ← Quartus project files, SDC, STA scripts
-│   │   │   └── OVERFLOW_CONTROL/            ← (same 192-tap Q=20, true 32-bit tree, wrap-around)
+│   │   │   ├── fir_basic.sv                 ← Direct-form FIR
+│   │   │   ├── fir_pipelined.sv             ← Pipelined adder-tree FIR
+│   │   │   ├── fir_parallel_L2.sv           ← L=2 parallel (polyphase) FIR
+│   │   │   ├── fir_parallel_L3.sv           ← L=3 parallel (polyphase) FIR
+│   │   │   ├── fir_parallel_L3_pipelined.sv ← L=3 parallel + pipelined adder trees
+│   │   │   ├── fir_mcm.sv                   ← MCM (CSD shift-add) direct-form FIR
+│   │   │   ├── fir_mcm_pipelined.sv         ← MCM + pipelined adder tree
+│   │   │   ├── tb_fir*.sv                   ← Testbenches (one per architecture)
+│   │   │   └── quartus/                     ← Quartus project files, SDC, STA scripts
 │   │   └── matlab/
-│   │       ├── OVERFLOW_PREVENT/
-│   │       │   ├── FIR_Filter_Project.m      ← MATLAB design + quantization script
-│   │       │   └── plots/                   ← Exported MATLAB figures
-│   │       └── OVERFLOW_CONTROL/            ← (32-bit overflow analysis)
-│   │           └── FIR_Filter_Overflow_Control.m  ← MATLAB overflow analysis script
+│   │       ├── FIR_Filter_Project.m         ← MATLAB design + quantization script
+│   │       └── plots/                       ← Exported MATLAB figures
 │   ├── Supporting_Documentation/
 │   │   └── Project.pdf
 │   └── README.md
@@ -63,7 +58,7 @@ Advanced_VLSI/
 - Selected: Q = 20 bits (21-bit signed coefficients).
 - Side-by-side floating-point vs. quantized magnitude response:
 
-![Quantization Sweep](coding/matlab/OVERFLOW_PREVENT/plots/quantization_sweep.png)
+![Quantization Sweep](coding/matlab/plots/quantization_sweep.png)
 
 #### Quantization Sensitivity and Coefficient Weights
 
@@ -82,7 +77,7 @@ That same trade-off kept coming back. If I tried to make the arithmetic cleaner,
 
 ### 3.3 Filter Response
 
-![Filter Response](coding/matlab/OVERFLOW_PREVENT/plots/filter_response.png)
+![Filter Response](coding/matlab/plots/filter_response.png)
 
 | Metric | Float | Quantized (Q=20) |
 |---|---|---|
@@ -100,117 +95,6 @@ That same trade-off kept coming back. If I tried to make the arithmetic cleaner,
 
 The safe answer is easy: size the accumulator for the absolute worst case and be done with it. No saturation, no clipping, no wrap-around to think about. Just carry enough bits that nothing bad can happen. It is clean, and it works. It also means those 38 bits have to pass through the whole adder tree, which is where the area and routing penalties come from.
 
-`OVERFLOW_CONTROL/` goes the other way. Instead of making overflow impossible, it keeps the internal datapath at 32 bits and leans on ordinary two's complement wrap-around. That saves real hardware because every product register, tree node, and pipeline stage gets narrower. The catch is obvious: I then have to argue that the practical operating cases still behave.
-
-### 3.6 Overflow Control: 32-Bit Accumulator Exploration
-
-This section is really me trying to justify the 32-bit `OVERFLOW_CONTROL/` branch without hand-waving. Exploring the `PREVENT` versus `CONTROL` overflow approaches turned into one of the more interesting parts of the project, because at first cutting off 6 bits for area savings did not feel like something that should work safely.
-
-#### 3.6.1 Accumulator Width Derivation
-
-For an $N$-tap symmetric FIR with pre-add folding, the accumulator computes:
-
-$$\text{acc} = \sum_{k=0}^{N/2 - 1} h_{\text{int}}[k] \cdot \bigl(x[k] + x[N{-}1{-}k]\bigr)$$
-
-where $h_{\text{int}}[k] = \text{round}(h[k] \cdot 2^Q)$ are the quantised integer coefficients.
-
-Theoretical (worst-case) width, assuming every product hits maximum magnitude with the same sign:
-
-$$W_{\text{acc}}^{\text{theo}} = \underbrace{(W_{\text{in}} + 1)}_{\text{pre-add}} + \underbrace{(Q + 1)}_{\text{coeff}} + \underbrace{\lceil \log_2(N/2) \rceil}_{\text{tree growth}}$$
-
-For the OVERFLOW_PREVENT design ($N = 192$, $Q = 20$):
-
-$$W_{\text{acc}}^{\text{theo}} = 17 + 21 + 7 = 45 \text{ bits}$$
-
-That bound is way too pessimistic. It assumes all 96 folded products hit their maximum magnitude with the same sign at once, which is not how this filter behaves in any realistic case.
-
-Practical (signal-aware) width uses the actual coefficient magnitudes:
-
-$$|\text{acc}_{\max}| = \underbrace{\sum_{k=0}^{N-1} |h_{\text{int}}[k]|}_{S_{|h|}} \;\times\; \underbrace{(2^{W_{\text{in}}-1} - 1)}_{\text{max input magnitude}}$$
-
-$$W_{\text{acc}}^{\text{pract}} = \lceil \log_2(|\text{acc}_{\max}|) \rceil + 1 \quad (\text{+1 for sign})$$
-
-For the OVERFLOW_PREVENT design: $S_{|h|} = 2{,}278{,}816$, $|\text{acc}_{\max}| = 74{,}676{,}844{,}942$, giving $W_{\text{acc}}^{\text{pract}} = 38$ bits. That's already 7 bits narrower than the theoretical bound, but still 6 bits wider than what a 32-bit datapath can hold.
-
-#### 3.6.2 The 80 dB + 32-Bit Impossibility
-
-For a signed 32-bit accumulator to never overflow:
-
-$$S_{|h|} \times (2^{15} - 1) \leq 2^{31} - 1 \quad\Longrightarrow\quad \boxed{S_{|h|} \leq 65{,}536}$$
-
-Since $S_{|h|} \approx \sigma \cdot 2^Q$ where $\sigma = \sum |h[k]|$ is the floating-point $L_1$ norm:
-
-$$\sigma \cdot 2^Q \leq 65{,}536 \quad\Longrightarrow\quad \boxed{Q \leq 16 - \log_2(\sigma)}$$
-
-From the OVERFLOW_PREVENT design: $\sigma = 2{,}278{,}816 / 2^{20} = 2.173$, which gives:
-
-$$Q_{\max} = \lfloor 16 - \log_2(2.173) \rfloor = \lfloor 14.88 \rfloor = 14$$
-
-But from the quantisation sweep (Section 3.2), Q = 20 is the minimum to preserve ≥ 80 dB stopband. Q = 18 only gets about 78 dB, and Q = 14 drops to around 63 dB.
-
-This was the real corner: to keep the stopband above 80 dB, I need Q ≥ 20. To guarantee no overflow in 32 bits, I need Q ≤ 14. Those two requirements simply do not meet. And because the floating-point $L_1$ norm $\sigma$ is tied to the filter spec, adding more taps is not some magic escape hatch.
-
-$$\underbrace{Q \geq 20}_{\text{80 dB stopband}} \quad \text{vs.} \quad \underbrace{Q \leq 14}_{\text{32-bit overflow-free}} \quad\Longrightarrow\quad \textbf{no solution exists}$$
-
-#### 3.6.3 Resolution: True 32-Bit Tree with Two's Complement Wrap-Around
-
-So I stopped trying to make the 32-bit version mathematically overflow-proof. I kept Q = 20, because I was not giving up the stopband target, and made the entire internal datapath a real 32-bit tree. No secret wide accumulator hiding inside. No output clamp pretending the internal cost disappeared.
-
-The worst-case accumulator magnitude still blows past the 32-bit signed range:
-
-$$|\text{acc}_{\max}| = 74{,}676{,}844{,}942 \quad (38 \text{ bits}) \quad\gg\quad 2^{31} - 1 = 2{,}147{,}483{,}647 \quad (32 \text{ bits})$$
-
-The overflow ratio is:
-
-$$R_{\text{overflow}} = \frac{|\text{acc}_{\max}|}{2^{31} - 1} = \frac{74{,}676{,}844{,}942}{2{,}147{,}483{,}647} \approx 34.8\times$$
-
-What changed my thinking was realizing how unrealistic that worst case really is. The impulse response oscillates, so there is cancellation built in over time. Real lowpass inputs also do not line up in a way that drives every folded tap pair to its maximum value with the same sign all at once. Once I worked through that more carefully, it started to make sense that the likely worst case was extremely unlikely in practice, which is what made the 32-bit version feel reasonable.
-
-Wrap-around works here because two's complement addition forms a ring $\mathbb{Z}/2^{32}\mathbb{Z}$. Products get truncated from 38 to 32 bits when stored, and partial sums may wrap during tree reduction. As long as the final mathematical result fits within $[{-2^{31}},\; 2^{31}{-}1]$, intermediate wraps cancel in the modular sum. This does depend on the tree structure and truncation points matching; it's not a blanket guarantee for arbitrary reorderings. For the tested impulse and step stimuli (and by extension, typical signal levels well below the overflow threshold), the 32-bit tree matched the 38-bit OVERFLOW_PREVENT tree exactly (Section 3.6.6). The design should hold for practical bandlimited conditions, but pathological inputs near full-scale could produce divergent results.
-
-#### 3.6.4 Implementation
-
-I did try the obvious saturation version first: keep the 38-bit tree and clamp the output. It was hard to justify keeping that around because it saves basically none of the internal cost. The version that actually changes the hardware is the one below:
-
-```systemverilog
-parameter W_OUT = 32;  // no W_ACC parameter — everything runs at W_OUT
-
-reg signed [W_OUT-1:0] product [0:95];   // 32-bit products (truncated from 38-bit multiply)
-reg signed [W_OUT-1:0] tree    [0:127];  // 32-bit adder tree nodes
-
-// Output is the tree root — no saturation logic
-always @(posedge clk)
-    dout <= tree[1];  // direct assignment, natural wrap-around
-```
-
-Every signal in the datapath (products, tree nodes, pipeline registers, outputs) is 32 bits wide. There's no `W_ACC` parameter at all. The 38-bit multiply result (`W_PREADD + W_COEFF = 17 + 21 = 38`) just gets truncated to 32 bits by Verilog's assignment semantics, keeping the lower 32 bits (the correct modular residue).
-
-That gives you real area savings over OVERFLOW_PREVENT: 6 fewer bits at every tree node, pipeline register, and product element.
-
-#### 3.6.5 Design-Space Trade-Off Summary
-
-| Parameter | OVERFLOW_PREVENT | OVERFLOW_CONTROL |
-|---|---|---|
-| Number of taps $N$ | 192 | 192 |
-| Coefficient word length $Q$ | 20 | 20 |
-| Signed coefficient width | 21 bits | 21 bits |
-| Internal tree precision | 38 bits | 32 bits |
-| Output width ($W_{\text{out}}$) | 38 bits | 32 bits |
-| Stopband attenuation (quantised) | 80.1 dB | 80.1 dB |
-| Overflow strategy | Prevent (wide tree) | Accept (wrap-around) |
-| Saturation logic | Not needed | Not needed |
-| Extra parameters | `W_ACC = 38` | None (`W_OUT` only) |
-
-So that is the trade in plain language. `OVERFLOW_PREVENT` spends width to buy certainty. `OVERFLOW_CONTROL` gives some of that certainty back and gets a cheaper datapath. For the cases I actually tested, both behave the same. What made this line of thinking useful is that it opened the door to the idea that scaling down further might be possible too, if the operating assumptions stay realistic and the performance gain is worth it.
-
-#### 3.6.6 When Does Overflow Actually Occur?
-
-For the step-response test (constant `din = 1000` for 192+ cycles), the converged accumulator value is:
-
-$$\text{acc}_{\text{step}} = \sum_{k=0}^{191} h_{\text{int}}[k] \times 1000 = 1{,}018{,}790 \times 1000 = 1{,}018{,}790{,}000$$
-
-Since $1{,}018{,}790{,}000 < 2^{31} - 1 = 2{,}147{,}483{,}647$, the step response fits comfortably in 32 signed bits, and the wrap-around tree gives the same answer as the 38-bit OVERFLOW_PREVENT tree for this stimulus. The overflow threshold works out to $\lfloor (2^{31}-1) / S_{|h|} \rfloor = \lfloor 2{,}147{,}483{,}647 / 2{,}278{,}816 \rfloor = 942$: sustained input amplitudes at or above that level, aligned in polarity with the coefficients, could push the result past 32 bits. For typical signal levels there's plenty of margin, but it's not a blanket guarantee for every conceivable input. The MATLAB script `coding/matlab/OVERFLOW_CONTROL/FIR_Filter_Overflow_Control.m` performs this analysis and exports the coefficient table.
-
 ## 4. SystemVerilog Implementation
 
 I kept the ModelSim flow the same for all seven architectures. That made comparison much easier. Every testbench has two phases so I can check both the impulse-response sequence and the steady-state DC behavior:
@@ -221,7 +105,7 @@ I kept the ModelSim flow the same for all seven architectures. That made compari
 | Reset | `rst_n` held low for 50 ns, released with 20 ns settling |
 | Phase 1 (Impulse) | Single-sample pulse (`din = 1`) for one clock, then zero. Captures the full 192-coefficient impulse response. |
 | Phase 2 (Step) | Constant `din = 1000` sustained for the full filter depth. Verifies DC-gain convergence to `sum(coeff) × 1000 = 1,018,790,000`. |
-| VCD dump | Enabled for all designs; waveforms saved to `coding/verilog/OVERFLOW_PREVENT/*.vcd` |
+| VCD dump | Enabled for all designs; waveforms saved under `coding/verilog/` |
 
 Loop iterations scale by architecture to allow complete output flushing:
 
@@ -509,13 +393,13 @@ Device: Cyclone V 5CGXFC9E7F35C8 (GX variant, F35 package, speed grade C8)
 
 Device choice was mostly forced by the design set [1]. The L=3 parallel versions can use 288 DSP blocks. The smaller 5CGXFC7C7F23C8 part only has 156, so that would have cut out a large part of the comparison immediately.
 
-Timing constraint: 100 MHz target clock (shared `fir.sdc` in both `OVERFLOW_PREVENT/quartus/` and `OVERFLOW_CONTROL/quartus/`).
+Timing constraint: 100 MHz target clock (`fir.sdc` in `coding/verilog/quartus/`).
 
 ### 5.2 DSP Chain Note
 
 For the non-pipelined versions, explicit combinational reduction trees were necessary. If left alone, Quartus tried to infer DSP accumulation chains longer than the Cyclone V limit of 22 blocks. That path went nowhere.
 
-### 5.3 OVERFLOW_PREVENT Results
+### 5.3 38-Bit Accumulator Results
 
 | Architecture | Area (ALMs) | Registers | DSP Blocks | Fmax (MHz) | Throughput (Msps) |
 |---|---|---|---|---|---|
@@ -601,67 +485,11 @@ At the other end, L=3 pipelined is expensive in power by a wide margin. Three ch
 
 One important caveat: these are not activity-driven estimates. They are good enough for ranking the architectures, but I would not treat them as final power-budget numbers.
 
-### 5.7 OVERFLOW_CONTROL Results
-
-`OVERFLOW_CONTROL/` keeps the internal datapath at 32 bits all the way through. Every product register, tree node, and pipeline stage is six bits narrower than in `OVERFLOW_PREVENT`. I rebuilt all seven under the same 100 MHz constraint and ran the same ModelSim checks again. For the impulse and step cases, everything still matched.
-
-| Architecture | Area (ALMs) | Registers | DSP Blocks | Fmax (MHz) | Throughput (Msps) |
-|---|---|---|---|---|---|
-| Direct-form | 1,108 | 3,688 | 96 | 44.6 | 44.6 |
-| Pipelined | 2,306 | 6,714 | 96 | 58.8 | 58.8 |
-| L=2 parallel | 1,488 | 3,552 | 192 | 43.6 | 87.2 |
-| L=3 parallel | 2,012 | 3,723 | 288 | 41.2 | 123.5 |
-| L=3 parallel + pipeline | 5,387 | 12,658 | 288 | 58.6 | 175.9 |
-| MCM direct-form | 4,976 | 3,407 | 0 | 38.1 | 38.1 |
-| MCM pipelined | 5,346 | 9,346 | 0 | 58.4 | 58.4 |
-
-Fmax calculation: $F_{\max} = 1000 / (10 - \text{slack})$ using the Slow 1100 mV 85 °C model.
-
-- Direct-form: slack = −12.418 ns, so $F_{\max} = 1000 / 22.418 = 44.6$ MHz
-- Pipelined: slack = −7.017 ns, so $F_{\max} = 1000 / 17.017 = 58.8$ MHz
-- MCM direct-form: slack = −16.213 ns, so $F_{\max} = 1000 / 26.213 = 38.1$ MHz
-- MCM pipelined: slack = −7.135 ns, so $F_{\max} = 1000 / 17.135 = 58.4$ MHz
-- L=2 parallel: slack = −12.939 ns, so $F_{\max} = 1000 / 22.939 = 43.6$ MHz, throughput = 2 × 43.6 = 87.2 Msps
-- L=3 parallel: slack = −14.281 ns, so $F_{\max} = 1000 / 24.281 = 41.2$ MHz, throughput = 3 × 41.2 = 123.5 Msps
-- L=3 pipelined: slack = −7.053 ns, so $F_{\max} = 1000 / 17.053 = 58.6$ MHz, throughput = 3 × 58.6 = 175.9 Msps
-
-### 5.8 OVERFLOW_CONTROL Interconnect Usage
-
-| Architecture | Avg Interconnect (total/H/V) | Peak Interconnect (total/H/V) | Block IC | Fan-out (avg) | Fan-out (max) |
-|---|---|---|---|---|---|
-| Direct-form | 1.8% / 1.5% / 2.8% | 16.3% / 14.1% / 23.6% | 8,479 (1%) | 3.81 | 3,784 |
-| Pipelined | 1.8% / 1.7% / 2.3% | 15.6% / 14.8% / 18.2% | 12,343 (2%) | 3.33 | 6,906 |
-| L=2 parallel | 5.3% / 4.4% / 8.2% | 22.7% / 18.1% / 37.1% | 14,971 (2%) | 4.15 | 3,744 |
-| L=3 parallel | 11.7% / 9.5% / 18.7% | 41.2% / 36.9% / 56.7% | 21,136 (3%) | 4.44 | 4,011 |
-| L=3 parallel + pipeline | 7.8% / 6.8% / 10.8% | 17.2% / 17.1% / 25.4% | 32,992 (5%) | 3.34 | 13,234 |
-| MCM direct-form | 2.0% / 2.0% / 2.0% | 28.5% / 28.3% / 29.4% | 19,114 (3%) | 3.13 | 3,407 |
-| MCM pipelined | 1.9% / 1.9% / 2.0% | 22.7% / 22.5% / 23.5% | 19,941 (3%) | 3.03 | 9,346 |
-
-### 5.9 OVERFLOW_PREVENT vs OVERFLOW_CONTROL Comparison
-
-The 32-bit datapath saves resources at every design point. The biggest wins are in the pipelined architectures, where pipeline registers dominate area:
-
-| Architecture | ALM Δ | Register Δ | Fmax Δ |
-|---|---|---|---|
-| Direct-form | −1.5 % (1,125 → 1,108) | −0.2 % (3,694 → 3,688) | +2.3 % (43.6 → 44.6) |
-| Pipelined | −24.0 % (3,032 → 2,306) | −26.5 % (9,137 → 6,714) | +0.5 % (58.5 → 58.8) |
-| L=2 parallel | −4.4 % (1,556 → 1,488) | −1.9 % (3,620 → 3,552) | +5.3 % (41.4 → 43.6) |
-| L=3 parallel | −12.7 % (2,305 → 2,012) | +0.8 % (3,694 → 3,723) | −1.4 % (41.8 → 41.2) |
-| L=3 parallel + pipeline | −28.9 % (7,581 → 5,387) | −36.4 % (19,899 → 12,658) | +0.2 % (58.5 → 58.6) |
-| MCM direct-form | −1.3 % (5,042 → 4,976) | −2.5 % (3,493 → 3,407) | +2.1 % (37.3 → 38.1) |
-| MCM pipelined | −5.2 % (5,639 → 5,346) | −10.9 % (10,496 → 9,346) | −0.2 % (58.5 → 58.4) |
-
-The pattern is pretty consistent. Biggest savings: pipelined designs. That is where removing six bits gets multiplied across a large number of registers.
-
-The smaller non-pipelined single-channel designs do not move as much. There just are not as many width-sensitive storage elements to benefit. L=3 parallel is the exception because so much datapath gets replicated across three channels that even a six-bit trim adds up fast.
-
-Fmax stays roughly flat, maybe a little better in places. That also makes sense. The datapath is narrower, so routing pressure eases a bit, but the DSP configuration itself did not change.
-
 ## 6. Further Analysis and Conclusion
 
 ### 6.1 Architecture Comparison
 
-Putting everything on the same throughput-efficiency footing makes the trade-offs easier to see. The numbers below use the OVERFLOW_PREVENT results because that is also the branch where the power estimates were run. The 32-bit comparison is in Section 5.9.
+Putting everything on the same throughput-efficiency footing makes the trade-offs easier to see. The numbers below use the 38-bit accumulator results because that is also the set where the power estimates were run.
 
 | Architecture | Fmax (MHz) | Throughput (Msps) | ALMs | DSPs | Dynamic Power (mW) | Throughput/ALM (Ksps/ALM) | Throughput/mW (Msps/mW) |
 |---|---|---|---|---|---|---|---|
@@ -696,8 +524,6 @@ For timing, pipelining was the strongest lever by far. Once the reduction tree w
 Polyphase decomposition was the cleanest way I found to buy throughput. The non-pipelined L=3 version, in particular, gets a lot done for the amount of hardware it uses. That was one of the clearer moments where a course concept stopped being a diagram and turned into a number I could actually compare.
 
 The MCM/CSD path also ended up being more than a curiosity. It gives up timing and logic area, but it frees every DSP block and does it with the lowest dynamic power in the set. Working through those trade-offs, especially where area or path depth could be cut, was a big part of what made the project worthwhile from a learning standpoint.
-
-The 32-bit `OVERFLOW_CONTROL` branch was worth doing too. At first, chopping off 6 bits for the sake of area management felt risky. After working through the oscillating-response argument and the unlikelihood of the pathological worst case, it became much easier to justify. In the tested impulse and step cases it behaved exactly like the wider `OVERFLOW_PREVENT` versions, while cutting meaningful area from the register-heavy designs. That part of the project took some real reasoning to get through, but it ended up being one of the most interesting turns in the whole implementation.
 
 ## 7. Open-Ended Final Design Project
 
