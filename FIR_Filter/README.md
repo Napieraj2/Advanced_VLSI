@@ -1,20 +1,25 @@
 # Advanced VLSI: FIR Filter Design Project
-
 ## 1. Project Overview
 
-The basic job here was to design, quantize, and implement an equiripple lowpass FIR filter in SystemVerilog for a Cyclone V FPGA. The project spec started at 100 taps and allowed more if needed, and that ended up mattering a lot. What really made the project interesting to me was watching the ideas from the course show up in actual hardware decisions through a lot of trial and error, especially after I built a MATLAB sweep to search for the best practical configuration instead of guessing.
+The assigned class project focused on designing an FIR filter. Using the provided MATLAB workflow, I was able to quantize the coefficients and implement an equiripple lowpass FIR filter in SystemVerilog.
+
+### 1.1 Specification
+The project specification baseline was set at 100 taps. As we will see in the design implementation section, this results in a design that is not optimal for signal performance(due to large passband dB swings).  In *Table 1* below we can see the remaining design specs as found in the *FIR_Filter/Supporting Documentation/Project.pdf*.
 
 | Parameter | Value |
 |---|---|
-| Filter type | Lowpass, linear phase (Type I) |
-| Number of taps | Started at 100 per spec, increased if needed |
+| Filter type | Lowpass, linear phase (Type I*) |
+| Number of taps | 100, increase if needed |
 | Passband edge | 0.20 × Nyquist |
 | Stopband edge | 0.23 × Nyquist |
 | Stopband attenuation | ≥ 80 dB |
-| Passband ripple | ≤ 0.5 dB |
+| Passband ripple*| ≤ 0.5 dB |
 | Design method | Parks–McClellan (`firpm`) equiripple [1][2] |
 
-What kept me engaged was not just the filter itself. It was the process of reasoning through where I could simplify the circuit, cut area, shorten the critical path, or restructure the design so it would push a little further. That part ended up being the most valuable part of the project for me, because the implementation work forced the course concepts to become concrete.
+*Not a project requirement, but ideally the ripple is small to ensure signal integrity.
+
+### 1.2 Motivation
+What made this project rewarding and kept me most engaged was not just the FIR filter itself (though seeing the digital output in the waveforms was interesting). The real motivation came from reasoning through where I could simplify the circuit, reduce area, shorten the critical path, and restructure the design to push performance further. That process became the most valuable part of the project because the implementation work forced the course concepts to become concrete.
 
 ## 2. Repository Structure
 
@@ -51,11 +56,10 @@ Advanced_VLSI/
 
 ### 3.1 Floating-Point Design
 - `firpm` [2] with auto-tuned tap count and weights; band edges `[0 0.20 0.23 1]`.
-- Final design: **192 taps** (order 191), stopband weight 313.7.
-- Passband ripple and stopband attenuation reported automatically.
+- Final design: 192 taps (order 191), stopband weight 313.7. This is 
 
 ### 3.2 Coefficient Quantization
-- Word-length sweep (Q = 8 to 24 bits) to find the minimum Q that preserves ≥ 80 dB stopband after rounding.
+- Word-length sweep (Q = 14 to 24 bits) to find the minimum Q that preserves ≥ 80 dB stopband after rounding.
 - Selected: Q = 20 bits (21-bit signed coefficients).
 - Side-by-side floating-point vs. quantized magnitude response:
 
@@ -63,7 +67,7 @@ Advanced_VLSI/
 
 #### Quantization Sensitivity and Coefficient Weights
 
-The `firpm` design [2] does what it is supposed to do, but it leaves behind a nasty coefficient spread. At one end I have values like 153. Near the middle I am up at 216,278. Quantization, unfortunately, is blind to that. One LSB is still one LSB, so the little coefficients get hit much harder in relative terms. A one-step rounding error on h(0) is noticeable. The same one-step error on h(95) barely matters. Naturally, the coefficients that get hurt first are also the ones doing a lot of the delicate work around the transition edge and stopband nulls.
+The `firpm` design [2] is very effective at generating the required coefficients with little math work to be done.  But asleaves behind a nasty coefficient spread. At one end I have values like 153. Near the middle I am up at 216,278. Quantization, unfortunately, is blind to that. One LSB is still one LSB, so the little coefficients get hit much harder in relative terms. A one-step rounding error on h(0) is noticeable. The same one-step error on h(95) barely matters. Naturally, the coefficients that get hurt first are also the ones doing a lot of the delicate work around the transition edge and stopband nulls.
 
 The Q-sweep tells the story pretty quickly. Q = 16 is not enough; the stopband drops to about 72 dB. Q = 18 is better, around 78 dB, but still not there. Q = 20 is the first point where the quantized design actually gets back over the line at 80.13 dB. So that is where I stopped.
 

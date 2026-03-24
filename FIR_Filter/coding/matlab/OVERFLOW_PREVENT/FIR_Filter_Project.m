@@ -35,7 +35,7 @@ while numTaps <= 500   % safety cap
     % --- inner: sweep stopband weight ---
     w_stop = 50;
     design_ok = false;
-    while w_stop <= 1e6
+    while w_stop <= 1e7
         w = [1 w_stop];
         b = firpm(N, f, a, w);
 
@@ -73,7 +73,7 @@ fprintf('Passband ripple: %.4f dB  (target <= %.1f dB)\n', Rp, max_passband_ripp
 
 %% 3 — Coefficient Quantization Word-Length Sweep
 % Sweep Q from 8 to 24 to find the minimum word length that keeps >= 80 dB
-Q_candidates = 8:2:24;
+Q_candidates = 14:1:24;
 As_q_results = zeros(size(Q_candidates));
 
 fprintf('\n========== Quantization Sweep ==========\n');
