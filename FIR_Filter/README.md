@@ -119,12 +119,12 @@ The front-end structure is unchanged from `fir_basic`. The only modification is 
 
 $$s_0(i) =
 \begin{cases}
-\operatorname{product}(i), & 0 \le i < 96 \\
+	ext{product}(i), & 0 \le i < 96 \\
 0, & 96 \le i < 128
 \end{cases}$$
 (*Equation 3*)
 
-$$s_{m+1}(i) = \operatorname{reg}\!\left[s_m(2i) + s_m(2i{+}1)\right], \qquad m = 0, \ldots, 6$$
+$$s_{m+1}(i) = \text{reg}[s_m(2i) + s_m(2i{+}1)], \qquad m = 0, \ldots, 6$$
 (*Equation 4*)
 
 ### 4.3 L=2 Parallel FIR (`fir_parallel_L2.v`)
@@ -137,6 +137,7 @@ $$H(z) = H_e(z^2) + z^{-1}\,H_o(z^2)$$
 $$H_e(z) = \sum_{j=0}^{95} h(2j)\,z^{-j}, \qquad H_o(z) = \sum_{j=0}^{95} h(2j{+}1)\,z^{-j}$$
 *(Equation 6)*
 
+##### *Polyphase Equations*
 $$y(2n)   = \sum_{j=0}^{95} h_e(j)\,x_0(n{-}j) \;+\; \sum_{j=0}^{95} h_o(j)\,x_1(n{-}1{-}j)$$
 *(Equation 7)*
 
