@@ -106,32 +106,18 @@ Quartus: Set-Location "[Path to project folder]\quartus"; $quartus = "[Path to q
 ModelSim:  
 
 ### 4.1 Direct-Form FIR (`fir_basic.v`)
+The baseline implementation is the standard FIR realization shown in *Equation 1*. A direct 192-tap implementation would require 192 multipliers, which is costly. However, linear-phase symmetry allows the delay line to be folded into pre-add pairs, as shown in *Equation 2* [3]. The resulting structure uses 96 pre-adders, 96 multipliers, and a single combinational adder tree to reduce the products to one final sum.  Simulation results were consistent with the expected behavior. The 192-sample impulse response matched the designed coefficient set, the symmetric coefficient pairs aligned correctly, and the step response settled to 1,018,790,000, which is equal to `sum(coeff) × 1000`. This corresponds to a DC gain of approximately 0.972, or about −0.25 dB, which remains safely within the 0.5 dB passband limit.
 
-This is the baseline implementation, just a straightforward FIR realization:
+$$y(n) = \sum_{k=0}^{N-1} h(k) \cdot x(n-k)$$  Equation 1
 
-$$y(n) = \sum_{k=0}^{N-1} h(k) \cdot x(n-k)$$
-
-192 multipliers would be expensive, but linear-phase symmetry ($h(k) = h(N{-}1{-}k)$) lets us fold the delay line into pre-add pairs [3]:
-
-$$y(n) = \sum_{k=0}^{95} h(k) \,\bigl[\,x(n-k) + x(n-(191-k))\,\bigr]$$
-
-So the structure is simple: 96 pre-adds, 96 multiplies, then one combinational tree to collapse the products down to a single sum.
-
-This one behaved exactly like the baseline should. The 192-sample impulse response matched the coefficient set, the symmetric pairs lined up, and the step response settled to 1,018,790,000 = `sum(coeff) × 1000`. That works out to a DC gain of about 0.972, or −0.25 dB, so it still sits safely inside the 0.5 dB passband limit. Overflow never gets close.
+$$y(n) = \sum_{k=0}^{95} h(k) \,\bigl[\,x(n-k) + x(n-(191-k))\,\bigr]$$  Equation 2
 
 ### 4.2 Pipelined FIR (`fir_pipelined.v`)
+The front-end structure is unchanged from `fir_basic`. The only modification is in the reduction path for the 96 products. In `fir_basic`, all 96 products are reduced through a single combinational adder tree that is 7 levels deep and padded to 128 entries. This approach works, but it requires the entire tree to settle within a single clock period. The pipelined version [3] instead inserts a register after every tree level, so each stage contains only a single two-input addition, as shown in *Equations 3* and *4*. After 7 adder stages, \(s_7(0)\) produces the final sum.  Including the product register, this adds a total latency of 8 cycles. In exchange, timing closure becomes much easier while throughput remains at 1 sample per clock. Functionally, this architecture does not change the filter output. The impulse and step responses are bit-identical to those of `fir_basic`; they simply appear later in time. Accordingly, `dout_valid` shifts from 85 ns to 165 ns, while the coefficient sequence itself remains unchanged.
 
-The front half is the same as `fir_basic`. All I changed was the reduction path for the 96 products.
+$$s_0(i) = \begin{cases} \text{product}(i) & 0 \le i < 96 \\ 0 & 96 \le i < 128 \end{cases}$$   Equation 3
 
-`fir_basic` throws all 96 products into a single combinational tree (7 levels deep, padded to 128 entries). That works, but the whole tree has to settle in one clock period. The pipelined version [3] puts a register after every level, so each stage is just one two-input add:
-
-$$s_0(i) = \begin{cases} \text{product}(i) & 0 \le i < 96 \\ 0 & 96 \le i < 128 \end{cases}$$
-
-$$s_{m+1}(i) = \text{reg}\bigl[\,s_m(2i) + s_m(2i{+}1)\,\bigr], \qquad m = 0,\dots,6$$
-
-After 7 stages, $s_7(0)$ is the final sum. Counting the product register, that adds 8 cycles of latency. In return, timing gets much easier to close while throughput stays at 1 sample per clock.
-
-Functionally, this one does not do anything new. The impulse and step outputs are bit-identical to `fir_basic`; they just show up later in time. `dout_valid` moves from 85 ns to 165 ns, and the coefficient sequence itself stays unchanged.
+$$s_{m+1}(i) = \text{reg}\bigl[\,s_m(2i) + s_m(2i{+}1)\,\bigr], \qquad m = 0,\dots,6$$   Equation 4
 
 ### 4.3 L=2 Parallel FIR (`fir_parallel_L2.v`)
 
