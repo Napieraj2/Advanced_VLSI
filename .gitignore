@@ -1,6 +1,7 @@
 # ModelSim / QuestaSim
 *.rpt
 work/
+work_verilog/
 *.vcd
 transcript
 vsim.wlf

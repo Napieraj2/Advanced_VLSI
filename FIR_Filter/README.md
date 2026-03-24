@@ -212,9 +212,9 @@ $$y(3n{+}2) = H_0 * x_2(n) \;+\; H_1 * x_1(n)     \;+\; H_2 * x_0(n)$$
 (*Equation 17*)
 
 ##### *Multiplier Count*
-Naive \(L = 3\) polyphase decomposition requires \(3 \times 3 = 9\) sub-filter convolutions, each with 64 taps, for a total of **576 multipliers**. Two symmetry properties reduce this requirement by 50%. The first reduction comes from the \(H_0/H_2\) cross pre-add relationship derived from the overall coefficient symmetry \(h(k) = h(191-k)\), as shown in *Equation 18*. Under this symmetry, \(H_2\) is the time-reversed version of \(H_0\). By substitution and re-indexing, each \(H_0 + H_2\) pair collapses into a single cross pre-add structure, as shown in polyphase *Equations 19–21*. This means each output requires only **64 multipliers** for the \(h_0\) branch, giving a total of \(3 \times 64 = 192\).
+Naive \(L = 3\) polyphase decomposition requires 3 x 3 = 9 sub-filter convolutions, each with 64 taps, for a total of **576 multipliers**. Two symmetry properties reduce this requirement by 50%. The first reduction comes from the \(H_0/H_2\) cross pre-add relationship derived from the overall coefficient symmetry \(h(k) = h(191-k)\), as shown in *Equation 18*. Under this symmetry, \(H_2\) is the time-reversed version of \(H_0\). By substitution and re-indexing, each \(H_0 + H_2\) pair collapses into a single cross pre-add structure, as shown in polyphase *Equations 19–21*. This means each output requires only **64 multipliers** for the \(h_0\) branch, giving a total of 3 x 64 = 192.
 
-An additional reduction comes from the self-symmetry of \(H_1\), shown in *Equation 22*. Since \(H_1\) is itself symmetric over 64 taps, it can be folded into 32 pre-add pairs as shown in *Equation 23*. As a result, each output requires only **32 multipliers** for the \(h_1\) branch, giving a total of \(3 \times 32 = 96\). The final multiplier count is therefore \(192 + 96 = 288\), which is exactly 50% of the naive 576-multiplier implementation.
+An additional reduction comes from the self-symmetry of \(H_1\), shown in *Equation 22*. Since \(H_1\) is itself symmetric over 64 taps, it can be folded into 32 pre-add pairs as shown in *Equation 23*. As a result, each output requires only **32 multipliers** for the \(h_1\) branch, giving a total of 3 x 32 = 96. The final multiplier count is therefore 192 + 96 = 288, which is exactly 50% of the naive 576-multiplier implementation.
 
 Simulation confirmed correct operation across all three output channels. The impulse response reconstructs the original coefficient sequence in 3-way interleaved order, and the step response settles to 1,018,790,000 on every output. This architecture still has a one-cycle output latency like `fir_basic`, but because it produces three samples per clock, the impulse response flushes much faster and the resulting VCD is the smallest among the non-pipelined implementations.
 
@@ -372,9 +372,9 @@ For the direct-form architecture, the setup slack was \(-15.832\) ns, giving \(F
 For the pipelined architecture, the setup slack improved to \(-7.038\) ns, giving \(F_{\max} = 1000 / 17.038 = 58.7\) MHz.  
 For the MCM direct-form architecture, the setup slack was \(-20.093\) ns, which gives \(F_{\max} = 1000 / 30.093 = 33.2\) MHz.  
 For the pipelined MCM architecture, the setup slack was \(-7.074\) ns, giving \(F_{\max} = 1000 / 17.074 = 58.6\) MHz.  
-For the \(L=2\) parallel architecture, the setup slack was \(-16.984\) ns, giving \(F_{\max} = 1000 / 26.984 = 37.1\) MHz. Since this version produces two output samples per clock, its throughput is \(2 \times 37.1 = 74.1\) Msps.  
-For the \(L=3\) parallel architecture, the setup slack was \(-17.465\) ns, giving \(F_{\max} = 1000 / 27.465 = 36.4\) MHz. Because it produces three output samples per clock, its throughput is \(3 \times 36.4 = 109.2\) Msps.  
-For the pipelined \(L=3\) architecture, the setup slack was \(-7.166\) ns, giving \(F_{\max} = 1000 / 17.166 = 58.3\) MHz. With three output samples per clock, its throughput is \(3 \times 58.3 = 174.8\) Msps.
+For the \(L=2\) parallel architecture, the setup slack was \(-16.984\) ns, giving \(F_{\max} = 1000 / 26.984 = 37.1\) MHz. Since this version produces two output samples per clock, its throughput is 2 x 37.1 = 74.1 Msps.  
+For the \(L=3\) parallel architecture, the setup slack was \(-17.465\) ns, giving \(F_{\max} = 1000 / 27.465 = 36.4\) MHz. Because it produces three output samples per clock, its throughput is 3 x 36.4 = 109.2 Msps.  
+For the pipelined \(L=3\) architecture, the setup slack was \(-7.166\) ns, giving \(F_{\max} = 1000 / 17.166 = 58.3\) MHz. With three output samples per clock, its throughput is 3 x 58.3 = 174.8 Msps.
 
 | Architecture | Area (ALMs) | Registers | DSP Blocks | Fmax (MHz) | Throughput (Msps) |
 |---|---|---|---|---|---|
