@@ -1,15 +1,31 @@
 # Simulink Cross-Check Model
 
-This folder hosts a Simulink block-diagram BER tester that mirrors
-[`../matlab/Viterbi_Decoder_Project.m`](../matlab/Viterbi_Decoder_Project.m): the
-same `poly2trellis(3,[7 5])` convolutional code, an AWGN channel, and parallel
-hard- and soft-decision Viterbi decoders sharing the trellis. It is intended as
-a visual cross-check of the script's BER numbers.
+This folder hosts the Simulink block-diagram BER tester and the two MATLAB
+sweep drivers that produce *Table 7 / Figure 3* (Simulink toolbox sweep) and
+*Table 8 / Figure 4* (RTL cosim sweep) in the parent
+[`../../README.md`](../../README.md). Both flows mirror
+[`../matlab/Viterbi_Decoder_Project.m`](../matlab/Viterbi_Decoder_Project.m):
+the same `poly2trellis(3,[7 5])` convolutional code, an AWGN channel, and
+parallel hard- and soft-decision Viterbi decoders sharing the trellis. The
+Simulink branch uses the Communications Toolbox `vitdec` block as an
+algorithmic baseline; the RTL cosim branch drives the synthesizable Verilog
+in [`../verilog/`](../verilog/) at the shipping `PIPELINE = 1, NORMALIZE = 1`
+configuration.
 
-## Build
+## Files
 
-The `.slx` is generated programmatically (so the repository can stay
-text-friendly). From this folder, in MATLAB:
+| File | Purpose |
+|---|---|
+| `build_viterbi_simulink_model.m` | Programmatic `.slx` builder. Generates the model from scratch so the repo can stay text-friendly. |
+| `Viterbi_Simulink_Model.slx` | Generated model (block diagram below). |
+| `run_simulink_ber_sweep.m` | Sweeps `EbN0_dB` over the model, $2 \times 10^6$ bits/point. Writes `plots/simulink_ber_sweep.{csv,png}`. |
+| `cosim_rtl_ber_sweep.m` | Sweeps `EbN0_dB` and drives the RTL via ModelSim batch (file I/O through `tb_viterbi_*_decoder_cosim.v`). $10^6$ bits/point. Writes `plots/cosim_rtl_ber.{csv,png}`. |
+| `export_simulink_model_image.m` | Captures `plots/simulink_model.png` from the open model. |
+| `plots/` | Generated artifacts referenced from the parent README (kept under version control as the canonical outputs). |
+
+## Build the model
+
+From this folder, in MATLAB:
 
 ```matlab
 build_viterbi_simulink_model      % creates Viterbi_Simulink_Model.slx
@@ -23,7 +39,7 @@ shift between MATLAB releases), either add your release's path to the
 `block_aliases()` table at the bottom of `build_viterbi_simulink_model.m`,
 or assemble the model by hand using the block list below.
 
-## Block list (manual fallback)
+### Block list (manual fallback)
 
 | Block                       | Library                                  | Key parameters                                              |
 |-----------------------------|------------------------------------------|-------------------------------------------------------------|
@@ -37,79 +53,75 @@ or assemble the model by hand using the block list below.
 | Viterbi Decoder (soft)      | Comm Toolbox / Convolutional Coding      | TrellisStructure = `TRELLIS`, tbdepth = `TB_DEPTH`, Soft, softBits = `SOFT_BITS` |
 | Error Rate Calculation × 2  | Comm Toolbox / Sinks                     | OutputData = Workspace, Variable = `BER_hard` / `BER_soft`  |
 
-## Block diagram
+### Block diagram
 
 ```
 Bernoulli ─► ConvEnc(7,5) ─► BPSK Mod ─► AWGN ─┬─► BPSK Demod ─► Viterbi (hard) ─► BER_hard
                                                └─► Quantizer  ─► Viterbi (soft) ─► BER_soft
 ```
 
-Both decoders use `TB_DEPTH = 12` to match the RTL. The soft path quantizes the
-AWGN output to `SOFT_BITS = 3` bits, the standard `vitdec` soft mode. The
-operating point defaults to `EbN0_dB = 4`; change it in the base workspace and
-re-run for a different point.
+Both decoders use `TB_DEPTH = 12` to match the RTL. The soft path quantizes
+the AWGN output to `SOFT_BITS = 3` bits, the standard `vitdec` soft mode.
+Single-point operation defaults to `EbN0_dB = 4`; for a sweep, use
+`run_simulink_ber_sweep.m` instead of running the model directly.
 
 Requires Simulink, Communications Toolbox, and DSP System Toolbox.
 
-## Cross-checking against the pipelined Verilog RTL
+## Toolbox BER sweep — `run_simulink_ber_sweep.m`
 
-By default the model uses the Communications Toolbox `Viterbi Decoder` block
-as a *reference* and does **not** exercise the pipelined RTL in
-[`../verilog/`](../verilog/). To add HDL Cosimulation branches that drive
-[`viterbi_hard_decoder.v`](../verilog/viterbi_hard_decoder.v) and
-[`viterbi_soft_decoder.v`](../verilog/viterbi_soft_decoder.v) alongside the
-toolbox decoders, rebuild with:
-
-```matlab
-build_viterbi_simulink_model('IncludeHDLCosim', true)
-```
-
-This adds two extra branches to the `.slx`:
-
-```
-                                           ┌─► Viterbi (toolbox, hard) ─► BER_hard
-AWGN ─► BPSK Demod ─► Buffer(2) ─► (rx0,rx1)┤
-                                           └─► HDL Cosim: viterbi_hard_decoder.v ─► BER_hard_rtl
-
-                                           ┌─► Viterbi (toolbox, soft) ─► BER_soft
-AWGN ─► Quantizer  ─► Buffer(2) ─► int8(±127)─►(soft0,soft1)┤
-                                           └─► HDL Cosim: viterbi_soft_decoder.v ─► BER_soft_rtl
-```
-
-Two `.do` scripts are emitted next to the `.slx`:
-
-| Script           | Purpose                                                             |
-|------------------|---------------------------------------------------------------------|
-| `cosim_hard.do`  | `vlog` the hard decoder, start ModelSim/Questa with cosim hooks.    |
-| `cosim_soft.do`  | Same for the soft decoder.                                          |
-
-Workflow:
-
-```bash
-# Terminal A - launch the simulator first
-vsim -do cosim_hard.do          # or cosim_soft.do (one session per branch)
-```
+Drives the Simulink model above across a 0.5 dB Eb/N0 grid and writes the
+results to [`plots/simulink_ber_sweep.csv`](plots/simulink_ber_sweep.csv) and
+[`plots/simulink_ber_sweep.png`](plots/simulink_ber_sweep.png). This is the
+*algorithmic* baseline — it exercises the toolbox `vitdec` block, not the
+Verilog. See *Table 7 / Figure 3* in the parent README for the produced
+numbers.
 
 ```matlab
-% MATLAB - bind the HDL Cosim block to the running simulator session
-% (open the block dialog once, set Connection = Socket, click 'Generate
-%  connection' or run cosimWizard).  HDL Verifier dialog parameter names
-% drift between releases so this step is left manual on purpose.
-sim('Viterbi_Simulink_Model')
-disp(BER_hard); disp(BER_hard_rtl)
-disp(BER_soft); disp(BER_soft_rtl)
+run_simulink_ber_sweep            % uses defaults (0:0.5:8 dB, 2e6 bits/point)
 ```
 
-The toolbox and RTL BER readouts should match within Monte-Carlo noise; any
-systematic offset usually points at a port-mapping mismatch in the HDL Cosim
-block dialog (input order is `in_valid, rx0/soft0, rx1/soft1`, outputs are
-`decoded_valid, decoded_bit`) or at the soft-bit centering convention
-(`int8 ±127`, zero-mean) on the soft branch.
+## RTL cosim BER sweep — `cosim_rtl_ber_sweep.m`
 
-Requires HDL Verifier in addition to the toolboxes listed above, plus a
-supported HDL simulator (ModelSim/Questa). The same Verilog files are also
-exercised standalone by the AWGN testbenches
-[`../verilog/tb_viterbi_hard_decoder_awgn.v`](../verilog/tb_viterbi_hard_decoder_awgn.v)
+Drives the synthesizable Verilog in [`../verilog/`](../verilog/) through
+ModelSim in batch mode using the file-I/O testbenches
+[`../verilog/tb_viterbi_soft_decoder_cosim.v`](../verilog/tb_viterbi_soft_decoder_cosim.v)
 and
-[`../verilog/tb_viterbi_soft_decoder_awgn.v`](../verilog/tb_viterbi_soft_decoder_awgn.v),
-which produce a comparable BER sweep without needing HDL Verifier.
+[`../verilog/tb_viterbi_hard_decoder_cosim.v`](../verilog/tb_viterbi_hard_decoder_cosim.v).
+For each Eb/N0 point the script generates a single continuous stream of
+`NBitsPerPoint` bits in MATLAB (BPSK + AWGN, soft-quantized to 8-bit signed
+for the soft branch and sliced to ±1 for the hard branch), writes
+`stim_{soft,hard}.txt`, runs ModelSim, reads back `dec_{soft,hard}.txt`, and
+counts bit errors. Outputs land at
+[`plots/cosim_rtl_ber.csv`](plots/cosim_rtl_ber.csv) and
+[`plots/cosim_rtl_ber.png`](plots/cosim_rtl_ber.png). See *Table 8 /
+Figure 4* in the parent README for the produced numbers.
+
+```matlab
+cosim_rtl_ber_sweep               % uses defaults (0:1:8 dB, 1e6 bits/point)
+```
+
+The cosim is a sign-off run of the exact RTL files that synthesize to the
+shipping Quartus numbers in *Table 5* of the parent README — same source,
+same `TB_DEPTH = 12`, same `NOM_LEVEL = 48` soft-quant scale. Requires
+ModelSim/Questa on the path; HDL Verifier is **not** required because the
+testbench-side I/O is plain `$readmemh` / `$fwrite`.
+
+> **Note.** `matlab -batch` may print an *"Access violation detected"* dump
+> from `libmwcustom_holes_factory.dll` on exit (R2025b, observed on Update 2
+> and 5). The fault is in an atexit handler that runs *after*
+> `cosim_rtl_ber.csv` / `.png` are written, so the outputs are correct; the
+> noisy exit code can be ignored as long as the artifacts have a fresh
+> timestamp.
+
+## Optional: Simulink HDL Verifier cosim branch
+
+`build_viterbi_simulink_model('IncludeHDLCosim', true)` adds two extra
+branches to the `.slx` that drive the same Verilog files through HDL
+Verifier alongside the toolbox decoders. This is **not** the path used to
+produce *Table 8 / Figure 4* — that uses the file-I/O flow above, which is
+faster, scriptable, and has no HDL Verifier dependency. The HDL Cosim
+branches are kept as an interactive cross-check for users who already have
+HDL Verifier and want to drive the RTL inside Simulink itself; they require
+an HDL Verifier license, manual `cosimWizard` setup, and a separate
+ModelSim session per branch. See the parameter help in
+`build_viterbi_simulink_model.m` for details.

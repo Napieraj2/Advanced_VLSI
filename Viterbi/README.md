@@ -32,16 +32,26 @@ Advanced_VLSI/
 │   ├── README.md
 │   └── coding/
 │       ├── verilog/
-│       │   ├── viterbi_soft_decoder.v        ← Soft-decision decoder RTL
-│       │   ├── viterbi_hard_decoder.v        ← Hard-decision decoder RTL
-│       │   ├── tb_viterbi_soft_decoder.v     ← Soft-decision testbench
-│       │   ├── tb_viterbi_hard_decoder.v     ← Hard-decision testbench
-│       │   └── quartus/                      ← Cyclone V synthesis projects (soft + hard revisions)
+│       │   ├── viterbi_soft_decoder.v             ← Soft-decision decoder RTL (PIPELINE=1, NORMALIZE=1)
+│       │   ├── viterbi_hard_decoder.v             ← Hard-decision decoder RTL (PIPELINE=1, NORMALIZE=1)
+│       │   ├── tb_viterbi_soft_decoder.v          ← Soft-decision unit testbench (42-vector self-check)
+│       │   ├── tb_viterbi_hard_decoder.v          ← Hard-decision unit testbench (42-vector self-check)
+│       │   ├── tb_viterbi_soft_decoder_awgn.v     ← Soft AWGN BER sweep (LFSR+Box-Muller channel)
+│       │   ├── tb_viterbi_hard_decoder_awgn.v     ← Hard AWGN BER sweep (LFSR+Box-Muller channel)
+│       │   ├── tb_viterbi_soft_decoder_cosim.v    ← Soft cosim TB (file I/O, MATLAB-driven channel)
+│       │   ├── tb_viterbi_hard_decoder_cosim.v    ← Hard cosim TB (file I/O, MATLAB-driven channel)
+│       │   └── quartus/                           ← Cyclone V synthesis projects (soft + hard revisions)
 │       ├── matlab/
-│       │   ├── Viterbi_Decoder_Project.m     ← BER-vs-Eb/N0 sweep, soft vs hard tradeoff study
+│       │   ├── Viterbi_Decoder_Project.m          ← BER-vs-Eb/N0 sweep, soft vs hard tradeoff study
 │       │   └── plots/
 │       └── simulink/
-│           └── Viterbi_Simulink_Model.slx    ← Block-diagram BER cross-check
+│           ├── README.md                          ← Simulink-flow notes
+│           ├── build_viterbi_simulink_model.m     ← Programmatic .slx builder
+│           ├── run_simulink_ber_sweep.m           ← Toolbox BER sweep → Table 7 / Fig 3
+│           ├── cosim_rtl_ber_sweep.m              ← RTL cosim sweep via ModelSim batch → Table 8 / Fig 4
+│           ├── export_simulink_model_image.m      ← Block-diagram screenshot helper
+│           ├── Viterbi_Simulink_Model.slx         ← Block-diagram BER cross-check (generated)
+│           └── plots/                             ← simulink_ber_sweep.{png,csv}, cosim_rtl_ber.{png,csv}, simulink_model.png
 ├── .gitignore
 └── LICENSE
 ```
@@ -427,7 +437,7 @@ The following remain open. *Path-metric normalization* and *continuous-stream co
 
 ## 10. References
 
-1. Viterbi, A. J. *Convolutional Codes and Their Performance in Communication Systems*. Course handout, included locally as [Supporting Documentation/viterbi.pdf](Viterbi/Supporting%20Documentation/viterbi.pdf). Provides the original ACS recursion, trellis formulation, and asymptotic coding-gain analysis used as the algorithmic reference for both decoders in this project.
-2. *Hard and Soft Decision Decoding Using the Viterbi Algorithm*. Course handout, included locally as [Supporting Documentation/Hard_and_Soft_Decision_Decoding_Using_Viterbi_Algorithm.pdf](Viterbi/Supporting%20Documentation/Hard_and_Soft_Decision_Decoding_Using_Viterbi_Algorithm.pdf). Source for the soft vs hard branch-metric formulation in *Equations 3* and *4* and the ~2 dB soft-over-hard coding-gain expectation that the MATLAB sweep in §8 confirms.
+1. Viterbi, A. J. *Convolutional Codes and Their Performance in Communication Systems*. Included in [Supporting Documentation/viterbi.pdf](Viterbi/Supporting%20Documentation/viterbi.pdf). Provides the original ACS recursion, trellis formulation, and asymptotic coding-gain analysis used as the algorithmic reference for both decoders in this project.
+2. *Hard and Soft Decision Decoding Using the Viterbi Algorithm*. Included in [Supporting Documentation/Hard_and_Soft_Decision_Decoding_Using_Viterbi_Algorithm.pdf](Viterbi/Supporting%20Documentation/Hard_and_Soft_Decision_Decoding_Using_Viterbi_Algorithm.pdf). Source for the soft vs hard branch-metric formulation in *Equations 3* and *4* and the ~2 dB soft-over-hard coding-gain expectation that the MATLAB sweep in §8 confirms.
 3. MathWorks. *Communications Toolbox — `poly2trellis`, `convenc`, `vitdec`*. Reference documentation for the trellis structure and `vitdec` soft/hard modes used by [Viterbi_Decoder_Project.m](Viterbi/coding/matlab/Viterbi_Decoder_Project.m) and the Simulink companion model.
 4. Intel/Altera. *Quartus Prime Standard 25.1 Lite — Timing Closure and Optimization User Guide*. Reference for the Slow 1100 mV 85 °C $F_{\max}$ corner and slack reporting conventions used in *Table 5*.
