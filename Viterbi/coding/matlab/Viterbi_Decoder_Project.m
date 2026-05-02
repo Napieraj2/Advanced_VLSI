@@ -56,7 +56,7 @@ end
 
 %% 2  Message generation
 rng(20260501,'twister');
-N_bits   = 1e5;                         % data bits per Eb/N0 point
+N_bits   = 1e6;                         % data bits per Eb/N0 point
 tail     = zeros(1, K-1);               % flush bits (matches RTL drain idea)
 tx_bits  = [randi([0 1], 1, N_bits), tail];
 coded    = convenc(tx_bits, trellis);   % column-pairs: [c0 c1 c0 c1 ...]
@@ -141,6 +141,13 @@ if ~exist('plots','dir'); mkdir('plots'); end
 saveas(fig, fullfile('plots','ber_soft_vs_hard.png'));
 fprintf('\nSaved BER plot to plots/ber_soft_vs_hard.png\n');
 
+% Also write a CSV with the sweep data so Figure 1 can be regenerated
+% from numbers, matching the pattern used by the Simulink and cosim flows.
+ber_table = table(EbN0_dB(:), ber_soft(:), ber_hard(:), ber_uncod(:), ...
+    'VariableNames', {'EbN0_dB','BER_soft','BER_hard','BER_uncoded'});
+writetable(ber_table, fullfile('plots','ber_soft_vs_hard.csv'));
+fprintf('Saved BER table to plots/ber_soft_vs_hard.csv\n');
+
 %% 6  Hardware Tradeoff Summary
 % Post-fit numbers from the two Cyclone V revisions in
 % Viterbi/coding/verilog/quartus/, target 5CGXFC9E7F35C8 @ 100 MHz.
@@ -171,7 +178,7 @@ fprintf(['\nTradeoff summary:\n', ...
          '    single-cycle ACS+%d-deep traceback combinational chain dominates\n', ...
          '    the critical path. Pipelining the ACS and converting the survivor\n', ...
          '    history to register-exchange would close this gap; see README \n', ...
-         '    section 7 (Notes and Possible Extensions).\n'], ...
+         '    section 9 (Notes and Possible Extensions).\n'], ...
          fmt_db(ebn0_hard - ebn0_soft), TB_DEPTH);
 
 %% --- Helpers ---------------------------------------------------------------

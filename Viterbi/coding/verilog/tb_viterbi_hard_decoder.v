@@ -148,6 +148,3 @@ module tb_viterbi_hard_decoder;
     end
 
 endmodule
-
-
-
