@@ -5,7 +5,7 @@ module viterbi_hard_decoder #(
     parameter METRIC_W = 16,
     // PIPELINE = 0 -> baseline (bit-exact original behavior)
     // PIPELINE = 1 -> insert one input-side register stage (+1 cycle latency)
-    parameter PIPELINE = 1
+    parameter PIPELINE = 0
 ) (
     input                      clk,
     input                      rst_n,

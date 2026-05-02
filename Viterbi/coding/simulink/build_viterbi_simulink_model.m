@@ -136,6 +136,7 @@ function paths = block_aliases(kind)
 % display label wraps onto multiple lines), so we build them with
 % sprintf to make the \n explicit.
 nl = char(10);
+
 switch kind
     case 'BernoulliBinaryGenerator'
         paths = {['commrandsrc3/Bernoulli Binary' nl 'Generator'], ...

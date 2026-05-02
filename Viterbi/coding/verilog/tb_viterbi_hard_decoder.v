@@ -6,6 +6,10 @@ module tb_viterbi_hard_decoder;
     parameter MSG_BITS  = 40;
     parameter TAIL_BITS = 2;
     parameter TOTAL_BITS = MSG_BITS + TAIL_BITS;
+    // PIPELINE additions: matches DUT PIPELINE parameter; LATENCY is the
+    // extra decode latency in clock cycles (0 baseline, 1 pipelined).
+    parameter PIPELINE  = 0;
+    localparam LATENCY  = (PIPELINE != 0) ? 1 : 0;
 
     reg clk;
     reg rst_n;
@@ -27,7 +31,8 @@ module tb_viterbi_hard_decoder;
 
     viterbi_hard_decoder #(
         .TB_DEPTH(TB_DEPTH),
-        .METRIC_W(16)
+        .METRIC_W(16),
+        .PIPELINE(PIPELINE) // PIPELINE additions
     ) dut (
         .clk(clk),
         .rst_n(rst_n),
@@ -109,7 +114,8 @@ module tb_viterbi_hard_decoder;
         end
 
         // Feed additional symbols so traceback can flush the last bits.
-        for (i = 0; i < TB_DEPTH + 4; i = i + 1) begin
+        // PIPELINE additions: extend flush by LATENCY to absorb extra latency.
+        for (i = 0; i < TB_DEPTH + 4 + LATENCY; i = i + 1) begin
             @(negedge clk);
             in_valid = 1'b1;
             rx0      = 1'b0;

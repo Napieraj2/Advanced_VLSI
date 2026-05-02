@@ -1,19 +1,20 @@
 `timescale 1ns/1ps
 
-module viterbi_hard_decoder #(
+module viterbi_soft_decoder #(
+    parameter SOFT_W   = 8,
     parameter TB_DEPTH = 12,
     parameter METRIC_W = 16,
     // PIPELINE = 0 -> baseline (bit-exact original behavior)
     // PIPELINE = 1 -> insert one input-side register stage (+1 cycle latency)
-    parameter PIPELINE = 1
+    parameter PIPELINE = 0
 ) (
-    input                      clk,
-    input                      rst_n,
-    input                      in_valid,
-    input                      rx0,
-    input                      rx1,
-    output reg                 decoded_valid,
-    output reg                 decoded_bit
+    input                           clk,
+    input                           rst_n,
+    input                           in_valid,
+    input      signed [SOFT_W-1:0]  soft0,
+    input      signed [SOFT_W-1:0]  soft1,
+    output reg                      decoded_valid,
+    output reg                      decoded_bit
 );
 
     localparam NUM_STATES = 4;
@@ -54,30 +55,30 @@ module viterbi_hard_decoder #(
 
     // ====================================================================
     // === PIPELINE additions: optional input register stage (PIPELINE=1) =
-    // Registers the hard-decision inputs and in_valid one cycle ahead of
+    // Registers the soft-decision inputs and in_valid one cycle ahead of
     // the BMU/ACS combinational logic.  Adds +1 cycle of decode latency.
     // When PIPELINE=0 these regs go unused and Quartus prunes them, so
     // baseline synthesis is unchanged.
     // ====================================================================
-    reg rx0_q;
-    reg rx1_q;
-    reg in_valid_q;
+    reg signed [SOFT_W-1:0] soft0_q;
+    reg signed [SOFT_W-1:0] soft1_q;
+    reg                     in_valid_q;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            rx0_q      <= 1'b0;
-            rx1_q      <= 1'b0;
+            soft0_q    <= {SOFT_W{1'b0}};
+            soft1_q    <= {SOFT_W{1'b0}};
             in_valid_q <= 1'b0;
         end else begin
-            rx0_q      <= rx0;
-            rx1_q      <= rx1;
+            soft0_q    <= soft0;
+            soft1_q    <= soft1;
             in_valid_q <= in_valid;
         end
     end
 
-    wire rx0_eff      = (PIPELINE != 0) ? rx0_q      : rx0;
-    wire rx1_eff      = (PIPELINE != 0) ? rx1_q      : rx1;
-    wire in_valid_eff = (PIPELINE != 0) ? in_valid_q : in_valid;
+    wire signed [SOFT_W-1:0] soft0_eff    = (PIPELINE != 0) ? soft0_q    : soft0;
+    wire signed [SOFT_W-1:0] soft1_eff    = (PIPELINE != 0) ? soft1_q    : soft1;
+    wire                     in_valid_eff = (PIPELINE != 0) ? in_valid_q : in_valid;
     // ====================================================================
     // === end PIPELINE additions =========================================
     // ====================================================================
@@ -88,6 +89,7 @@ module viterbi_hard_decoder #(
         reg c0;
         reg c1;
         begin
+            // Rate 1/2, K=3 encoder with generators (7,5)
             c0 = in_bit ^ prev_state[1] ^ prev_state[0];
             c1 = in_bit ^ prev_state[0];
             enc_out = {c0, c1};
@@ -95,17 +97,14 @@ module viterbi_hard_decoder #(
     endfunction
 
     function signed [METRIC_W-1:0] branch_metric;
-        input hard_rx0;
-        input hard_rx1;
+        input signed [SOFT_W-1:0] rx0;
+        input signed [SOFT_W-1:0] rx1;
         input [1:0] expected;
         reg signed [METRIC_W-1:0] m;
-        reg signed [METRIC_W-1:0] one;
         begin
-            // Sized +/-1 so Quartus does not truncate 32-bit ternary results.
-            one = {{(METRIC_W-1){1'b0}}, 1'b1};
             m = 0;
-            m = m + ((expected[1] == hard_rx0) ? one : -one);
-            m = m + ((expected[0] == hard_rx1) ? one : -one);
+            m = m + (expected[1] ? rx0 : -rx0);
+            m = m + (expected[0] ? rx1 : -rx1);
             branch_metric = m;
         end
     endfunction
@@ -157,8 +156,8 @@ module viterbi_hard_decoder #(
                     dst_state = {in_bit, prev_state[1]};
                     expected_bits = enc_out(prev_state, in_bit);
                     if (path_metric[prev_state] != METRIC_MIN) begin
-                        // PIPELINE: rx0_eff/rx1_eff = registered inputs when PIPELINE=1
-                        cand_metric = path_metric[prev_state] + branch_metric(rx0_eff, rx1_eff, expected_bits);
+                        // PIPELINE: soft0_eff/soft1_eff = registered inputs when PIPELINE=1
+                        cand_metric = path_metric[prev_state] + branch_metric(soft0_eff, soft1_eff, expected_bits);
 
                         if (cand_metric > next_path_metric[dst_state]) begin
                             next_path_metric[dst_state] = cand_metric;

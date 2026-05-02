@@ -3,7 +3,18 @@
 module viterbi_soft_decoder #(
     parameter SOFT_W   = 8,
     parameter TB_DEPTH = 12,
-    parameter METRIC_W = 16
+    parameter METRIC_W = 16,
+    // PIPELINE = 0 -> baseline (bit-exact original behavior)
+    // PIPELINE = 1 -> two-stage pipeline:
+    //                  (a) input-side register on soft0/soft1/in_valid
+    //                  (b) retime best-state search + 12-deep traceback to
+    //                      read from the *registered* path_metric and
+    //                      survivor_* arrays instead of the freshly-computed
+    //                      next_* combinational network.  This moves the
+    //                      long traceback mux chain out of the ACS
+    //                      combinational cone (the actual critical path on
+    //                      Cyclone V).  Adds +2 cycles of decode latency.
+    parameter PIPELINE = 1
 ) (
     input                           clk,
     input                           rst_n,
@@ -16,7 +27,9 @@ module viterbi_soft_decoder #(
 
     localparam NUM_STATES = 4;
     localparam STATE_W    = 2;
-    localparam signed [METRIC_W-1:0] METRIC_MIN = -((1 << (METRIC_W-1)) - 1);
+    // METRIC_MIN = -(2^(METRIC_W-1) - 1). Built as the explicit bit pattern
+    // 1_0..0_1 so Quartus does not flag a constant overflow on the arithmetic.
+    localparam signed [METRIC_W-1:0] METRIC_MIN = {1'b1, {(METRIC_W-2){1'b0}}, 1'b1};
 
     reg signed [METRIC_W-1:0] path_metric      [0:NUM_STATES-1];
     reg signed [METRIC_W-1:0] next_path_metric [0:NUM_STATES-1];
@@ -48,6 +61,36 @@ module viterbi_soft_decoder #(
     integer d;
     integer b;
 
+    // ====================================================================
+    // === PIPELINE additions: optional input register stage (PIPELINE=1) =
+    // Registers the soft-decision inputs and in_valid one cycle ahead of
+    // the BMU/ACS combinational logic.  Adds +1 cycle of decode latency.
+    // When PIPELINE=0 these regs go unused and Quartus prunes them, so
+    // baseline synthesis is unchanged.
+    // ====================================================================
+    reg signed [SOFT_W-1:0] soft0_q;
+    reg signed [SOFT_W-1:0] soft1_q;
+    reg                     in_valid_q;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            soft0_q    <= {SOFT_W{1'b0}};
+            soft1_q    <= {SOFT_W{1'b0}};
+            in_valid_q <= 1'b0;
+        end else begin
+            soft0_q    <= soft0;
+            soft1_q    <= soft1;
+            in_valid_q <= in_valid;
+        end
+    end
+
+    wire signed [SOFT_W-1:0] soft0_eff    = (PIPELINE != 0) ? soft0_q    : soft0;
+    wire signed [SOFT_W-1:0] soft1_eff    = (PIPELINE != 0) ? soft1_q    : soft1;
+    wire                     in_valid_eff = (PIPELINE != 0) ? in_valid_q : in_valid;
+    // ====================================================================
+    // === end PIPELINE additions =========================================
+    // ====================================================================
+
     function [1:0] enc_out;
         input [1:0] prev_state;
         input       in_bit;
@@ -75,6 +118,23 @@ module viterbi_soft_decoder #(
     endfunction
 
     always @* begin
+        // Unconditional defaults for every combinational temporary so Quartus
+        // does not infer latches when in_valid is low.
+        prev_state    = {STATE_W{1'b0}};
+        dst_state     = {STATE_W{1'b0}};
+        in_bit        = 1'b0;
+        expected_bits = 2'b0;
+        cand_metric   = {METRIC_W{1'b0}};
+        best_state    = {STATE_W{1'b0}};
+        best_metric   = METRIC_MIN;
+        tb_state      = {STATE_W{1'b0}};
+        tb_bits       = {TB_DEPTH{1'b0}};
+        b             = 0;
+        for (s = 0; s < NUM_STATES; s = s + 1) begin
+            best_prev[s] = {STATE_W{1'b0}};
+            best_bit[s]  = 1'b0;
+        end
+
         for (s = 0; s < NUM_STATES; s = s + 1) begin
             next_path_metric[s] = path_metric[s];
         end
@@ -90,7 +150,7 @@ module viterbi_soft_decoder #(
         next_decoded_valid = 1'b0;
         next_decoded_bit   = decoded_bit;
 
-        if (in_valid) begin
+        if (in_valid_eff) begin // PIPELINE: gated by registered in_valid when PIPELINE=1
             for (s = 0; s < NUM_STATES; s = s + 1) begin
                 next_path_metric[s] = METRIC_MIN;
                 best_prev[s]        = 0;
@@ -104,7 +164,8 @@ module viterbi_soft_decoder #(
                     dst_state = {in_bit, prev_state[1]};
                     expected_bits = enc_out(prev_state, in_bit);
                     if (path_metric[prev_state] != METRIC_MIN) begin
-                        cand_metric = path_metric[prev_state] + branch_metric(soft0, soft1, expected_bits);
+                        // PIPELINE: soft0_eff/soft1_eff = registered inputs when PIPELINE=1
+                        cand_metric = path_metric[prev_state] + branch_metric(soft0_eff, soft1_eff, expected_bits);
 
                         if (cand_metric > next_path_metric[dst_state]) begin
                             next_path_metric[dst_state] = cand_metric;
@@ -128,22 +189,32 @@ module viterbi_soft_decoder #(
             end
 
             best_state  = 0;
-            best_metric = next_path_metric[0];
+            // PIPELINE: when PIPELINE!=0, retime the best-state search and
+            // traceback to read from the *registered* path_metric and
+            // survivor_* arrays rather than the just-computed next_*
+            // combinational network.  This breaks the long traceback mux
+            // chain out of the ACS critical path.
+            best_metric = (PIPELINE != 0) ? path_metric[0] : next_path_metric[0];
             for (s = 1; s < NUM_STATES; s = s + 1) begin
-                if (next_path_metric[s] > best_metric) begin
-                    best_metric = next_path_metric[s];
+                if (((PIPELINE != 0) ? path_metric[s] : next_path_metric[s]) > best_metric) begin
+                    best_metric = (PIPELINE != 0) ? path_metric[s] : next_path_metric[s];
                     best_state  = s[STATE_W-1:0];
                 end
             end
 
             tb_state = best_state;
             for (d = 0; d < TB_DEPTH; d = d + 1) begin
-                tb_bits[d] = next_survivor_bit[d][tb_state];
-                tb_state   = next_survivor_prev[d][tb_state];
+                // PIPELINE: source switches with PIPELINE parameter (see above).
+                tb_bits[d] = (PIPELINE != 0) ? survivor_bit[d][tb_state]
+                                             : next_survivor_bit[d][tb_state];
+                tb_state   = (PIPELINE != 0) ? survivor_prev[d][tb_state]
+                                             : next_survivor_prev[d][tb_state];
             end
 
             next_decoded_bit = tb_bits[TB_DEPTH-1];
-            if (sym_count >= (TB_DEPTH-1)) begin
+            // PIPELINE: registered survivors are one cycle stale, so the
+            // first valid traceback walk needs one extra symbol of fill.
+            if (sym_count >= ((TB_DEPTH-1) + ((PIPELINE != 0) ? 1 : 0))) begin
                 next_decoded_valid = 1'b1;
             end
 

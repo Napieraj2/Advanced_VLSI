@@ -115,6 +115,25 @@ The soft decoder is parameterized by `SOFT_W` (default 8) for the input width an
 ### 4.2 Hard Decoder (`viterbi_hard_decoder.v`)
 The hard decoder strips out the soft input ports and replaces them with two single-bit symbol pins (`rx0`, `rx1`). Branch metrics are now restricted to the set $\{-2, 0, +2\}$, so 16-bit path metrics are far wider than necessary; the width was kept identical to the soft variant for parameter symmetry. Everything else, including ACS, survivor shift, traceback, and output handshake, is identical to the soft version.
 
+### 4.3 Architectural Differences Between the Two Decoders
+Both decoders share the same RTL skeleton, so it is worth being precise about what actually changes when the metric switches from soft to hard. *Table 2b* highlights the differences that surface in synthesis.
+
+| Aspect | Soft Decoder | Hard Decoder |
+|---|---|---|
+| Channel inputs | `soft0`, `soft1`, each `signed [SOFT_W-1:0]` (default 8 b, range $[-127, +127]$) | `rx0`, `rx1`, each one bit |
+| Branch-metric expression | $BM = (e_1 ? r_0 : -r_0) + (e_0 ? r_1 : -r_1)$ — signed dot product (*Eq. 3*) | $BM = (\pm 1) + (\pm 1)$ — agreement count, $\{-2, 0, +2\}$ (*Eq. 4*) |
+| Branch-metric range per symbol | $\pm 2 \cdot (2^{SOFT_W-1}-1) = \pm 254$ | $\pm 2$ |
+| Branch-metric hardware | Two `SOFT_W`-wide signed conditional negates plus a `METRIC_W`-wide adder | Two single-bit XNORs feeding $\pm 1$ constants into a small adder |
+| ACS adder width driven by | `METRIC_W + log2(TB_DEPTH)` headroom over $\pm 254$ symbol metrics | Same `METRIC_W` for parameter symmetry, but only ~3 LSBs are ever non-zero |
+| Path-metric dynamic range over `TB_DEPTH = 12` | $\pm 12 \cdot 254 \approx \pm 3000$ | $\pm 24$ |
+| Quantization sensitivity | Decoder integrates analog confidence; clipping `SOFT_W` directly trades coding gain for area | Decoder discards confidence at the slicer; no internal knob for performance vs area |
+| Best-state comparator | Compares wide signed metrics; LUT-rich, fewer carry chains needed | Compares narrow effective metrics; tool tends to pack into longer carry chains |
+| What is shared | `enc_out`, ACS loop topology, `survivor_prev`/`survivor_bit` survivor RAM, traceback walk, output handshake, reset pattern | Identical |
+
+*TABLE 2b: Soft vs Hard — Architectural Differences*
+
+The practical consequence is that the soft decoder is the wider design but also the more regularly structured one: every branch metric is a signed sum of two signed terms, and the ACS adder tree is sized once for the worst-case soft input. The hard decoder is narrower per branch but exposes every constant to the synthesizer, which is what produces the slightly worse $F_{\max}$ result reported in §7 — the tool collapses small adders onto long carry chains that route poorly relative to the soft decoder's wider but more uniform datapath.
+
 ## 5. Testbench and Simulation
 
 Both testbenches share the same skeleton, summarized in *Table 3*. The differences are isolated in the channel model and the input port set.
@@ -223,22 +242,37 @@ quartus_sta -t critical_path_extract.tcl viterbi_hard
 
 ### 7.2 Post-Fit Results
 
-Numbers below are read directly from `output_files/<rev>.fit.summary` and the Slow 1100 mV 85 °C corner of `<rev>.sta.rpt`.
+Numbers below are read directly from `output_files/<rev>.fit.summary` and the Slow 1100 mV 85 °C corner of `<rev>.sta.rpt`, after a clean full compile of both revisions on May 2, 2026 with the latch and truncation warnings cleared from the RTL. Each revision was fit twice — once with `PIPELINE = 0` (baseline, identical to the original implementation) and once with `PIPELINE = 1`. The pipelined mode is **deeper for the soft decoder than for the hard decoder**, because the two designs have very different critical paths (see commentary below):
 
-| Metric | `viterbi_soft` | `viterbi_hard` |
-|---|---|---|
-| ALMs (Logic utilization) | 410 / 113,560 | 346 / 113,560 |
-| Total registers | 211 | 192 |
-| Block memory bits | 0 | 0 |
-| DSP blocks | 0 | 0 |
-| Slow 85 °C $F_{\max}$ | **32.32 MHz** | **23.64 MHz** |
-| Slow 85 °C setup slack @ 100 MHz | $-20.94$ ns | $-32.30$ ns |
+* `viterbi_hard` pipelined: a single input-side register stage on `rx0`/`rx1`/`in_valid` ahead of the BMU. **+1** cycle of decode latency.
+* `viterbi_soft` pipelined: same input-side register stage, **plus** retiming of the best-state max search and the 12-deep traceback walk so they read from the *registered* `path_metric` and `survivor_*` arrays instead of the freshly-computed `next_*` combinational network. **+2** cycles of decode latency.
 
-*TABLE 5: Synthesis Results on Cyclone V `5CGXFC9E7F35C8`*
+The extra logic in either mode is fenced off in both decoders by clearly labeled `// === PIPELINE additions ===` blocks; with `PIPELINE = 0` the wires resolve straight to the raw inputs, the unused registers are pruned, and the traceback reads the freshly-computed `next_*` arrays — so the baseline column reproduces the original synthesis exactly.
 
-The area numbers line up with intuition: the soft decoder is ~19 % larger because its branch-metric path carries `SOFT_W = 8` signed samples through the ACS adder tree, while the hard decoder's branch metrics live in $\{-2, 0, +2\}$. Register counts move by a similar amount and trace almost entirely to the survivor RAM, which is unchanged in width between the two variants.
+| Metric | `viterbi_soft` (baseline) | `viterbi_soft` (pipelined) | `viterbi_hard` (baseline) | `viterbi_hard` (pipelined) |
+|---|---|---|---|---|
+| ALMs (Logic utilization) | 410 / 113,560 ($<$ 1 %) | 326 / 113,560 ($<$ 1 %) | 346 / 113,560 ($<$ 1 %) | 342 / 113,560 ($<$ 1 %) |
+| Total registers | 211 | 231 | 192 | 193 |
+| Total virtual pins | 20 | 20 | 6 | 6 |
+| Block memory bits | 0 | 0 | 0 | 0 |
+| RAM blocks | 0 | 0 | 0 | 0 |
+| DSP blocks | 0 | 0 | 0 | 0 |
+| Slow 85 °C $F_{\max}$ | **32.32 MHz** | **50.10 MHz** | **23.64 MHz** | **32.67 MHz** |
+| Slow 85 °C setup slack @ 100 MHz | $-20.94$ ns | $-9.96$ ns | $-32.30$ ns | $-20.61$ ns |
+| Slow 85 °C hold slack | $-10.74$ ns | $-10.26$ ns | $-10.05$ ns | $-9.95$ ns |
+| Decode latency | $TB\_DEPTH$ cycles | $TB\_DEPTH + 2$ cycles | $TB\_DEPTH$ cycles | $TB\_DEPTH + 1$ cycles |
+| Fitter status | Successful | Successful | Successful | Successful |
 
-The $F_{\max}$ result is more interesting. Both decoders miss the 100 MHz target by a wide margin, with the *hard* variant the slower of the two. Two things drive this: the ACS for every destination state, the best-state search, and a 12-deep traceback walk all sit in a single combinational block, which produces a critical path that scales with `TB_DEPTH` rather than with metric width; and the hard decoder's narrow $\{-2, 0, +2\}$ branch metrics let synthesis fold more logic into LUT chains that ended up routing onto longer wires than the soft decoder's wider, more regular adder structure. Pipelining the ACS, the best-state search, and the traceback into separate stages would dissolve this critical path entirely — the same lever the FIR sub-project pulled to push from `fir_basic` to `fir_pipelined`. That work is captured as the first item under §9.
+*TABLE 5: Synthesis Results on Cyclone V `5CGXFC9E7F35C8` — baseline vs pipelined (input register + traceback retiming for soft, input register only for hard)*
+
+The area numbers line up with intuition: at baseline the soft decoder is ~19 % larger because its branch-metric path carries `SOFT_W = 8` signed samples through the ACS adder tree, while the hard decoder's branch metrics live in $\{-2, 0, +2\}$. Pipelined ALM counts actually drop on both sides, with the soft decoder dropping the most (410 → 326, −20 %): retiming the traceback to read from registered survivors lets the fitter discard the wide combinational `next_*` mux network the baseline had to build for the in-cycle traceback walk, and replace it with simpler register-fed reads. The register count climbs by ~10 % on the soft side to support the input-register stage and the now-isolated max/traceback fanout, and barely moves on the hard side (+1 register overall, since `rx0_q`/`rx1_q`/`in_valid_q` collapse into a near-trivial slice).
+
+The $F_{\max}$ result is where the two decoders react very differently to pipelining, and it lines up with where each one's critical path actually lives.
+
+* The **hard** decoder gains a clean +38 % from the input-side register alone (23.64 → 32.67 MHz). With the BMU collapsed to a $\pm 1$ pair, its longest combinational path was running from the input pins through channel-input routing into the ACS comparator chain, and the new register stage breaks exactly that path. A deeper retiming would not buy much more, because beyond the input cut the hard decoder's combinational cone is narrow and balanced.
+* The **soft** decoder needs the deeper cut. Its critical path is *not* at the input pins but inside the closed ACS-plus-traceback combinational cone, where for every symbol the design computes `next_path_metric[]`, then immediately does a 4-way max over those values, then walks 12 steps of traceback through `next_survivor_*`. An input-side register alone slightly *hurt* the soft decoder (32.32 → 28.72 MHz in an interim fit) because it added fanout without breaking that internal cone. Once the max search and traceback are retimed to read the *registered* `path_metric`/`survivor_*` arrays, the long traceback mux chain runs in parallel from registers rather than chained off ACS results, and the critical path collapses to the ACS recursion itself. Soft $F_{\max}$ rises from 32.32 MHz to **50.10 MHz** (+55 %) at a cost of two extra cycles of latency.
+
+Neither variant closes the 100 MHz target yet — the remaining critical path on both is now the ACS recursion's `path_metric \to BMU + add\text{-}compare\text{-}select \to next\_path\_metric` loop, which is a closed feedback path that cannot be sliced without changing the algorithm (e.g., re-encoding the trellis to operate on two symbols at a time, or breaking the BMU into its own pipelined stage with a cycle-delayed metric write-back). Those are the next options listed in §9.
 
 ## 8. MATLAB Tradeoff Study
 
@@ -268,12 +302,14 @@ Layering the synthesis numbers from §7 onto the BER results gives the picture t
 
 | Decoder | ALMs | Regs | $F_{\max}$ (slow 85 °C) | $E_b/N_0$ @ BER $= 10^{-4}$ | Coding gain vs uncoded |
 |---|---|---|---|---|---|
-| Soft (3-bit) | 410 | 211 | 32.32 MHz | $\approx 5.5$ dB | $\approx 3$ dB |
-| Hard | 346 | 192 | 23.64 MHz | $\approx 7.5$ dB | $\approx 1$ dB |
+| Soft (3-bit), baseline | 410 | 211 | 32.32 MHz | $\approx 5.5$ dB | $\approx 3$ dB |
+| Soft (3-bit), pipelined | 326 | 231 | 50.10 MHz | $\approx 5.5$ dB | $\approx 3$ dB |
+| Hard, baseline | 346 | 192 | 23.64 MHz | $\approx 7.5$ dB | $\approx 1$ dB |
+| Hard, pipelined | 342 | 193 | 32.67 MHz | $\approx 7.5$ dB | $\approx 1$ dB |
 
-*TABLE 6: Combined Hardware/Channel Tradeoff*
+*TABLE 6: Combined Hardware/Channel Tradeoff (baseline vs pipelined)*
 
-The takeaway is straightforward: the soft decoder costs ~19 % more ALMs and ~10 % more registers and, in this particular synthesis run, actually closes timing better than the hard decoder. In exchange it buys ~2 dB of additional coding gain at $\mathrm{BER} = 10^{-4}$, which is the full 2 dB the textbook quotes for soft over hard on this code. If the design were ever to be deployed, the soft decoder is the clear pick on both fronts; the hard decoder is interesting mainly as the smaller, simpler reference point that the soft variant is measured against.
+The takeaway is straightforward: the soft decoder costs ~19 % more ALMs and ~10 % more registers at baseline and, in this particular synthesis run, actually closes timing better than the hard decoder. In exchange it buys ~2 dB of additional coding gain at $\mathrm{BER} = 10^{-4}$, which is the full 2 dB the textbook quotes for soft over hard on this code. If the design were ever to be deployed, the soft decoder is the clear pick on both fronts; the hard decoder is interesting mainly as the smaller, simpler reference point that the soft variant is measured against. Once pipelining is enabled, the soft decoder's advantage widens further: at $+2$ cycles of latency it reaches 50.1 MHz on 326 ALMs / 231 registers — simultaneously the fastest *and* smallest design in the table. The hard decoder, with only an input-register cut available to it, lands at 32.7 MHz / 342 ALMs. Closing 100 MHz on either variant still requires breaking the ACS recursion itself, listed under §9.
 
 ## 9. Notes and Possible Extensions
 
@@ -282,3 +318,10 @@ A few directions this design could be taken further if the project were continue
 - **Pipelined ACS.** Both decoders compile to roughly 25–32 MHz $F_{\max}$ on Cyclone V because the ACS for every destination state, the best-state search, and a 12-deep traceback walk are all combinational inside a single `always @*` block. Splitting branch-metric computation, add-compare, best-state selection, and traceback into separate pipeline stages would close the 100 MHz target with margin to spare, at the cost of a few extra cycles of latency. This mirrors the FIR pipelining trade-off in the sister project and is the most impactful next step for either decoder.
 - **Larger constraint length.** Extending to $K = 7$ (the standard 64-state convolutional code used in practice) would multiply the survivor memory and ACS hardware by 16 and would expose the value of survivor-memory partitioning and register-exchange traceback over the current full-history shift implementation.
 - **True AWGN soft channel in the testbench.** The Verilog soft testbench uses bounded uniform noise, which is enough to confirm the metric integrates evidence but is not a true AWGN process. The MATLAB study under §8 already runs the design model over AWGN; porting an LFSR-based Box–Muller noise source into the RTL testbench would let the hardware decoder be characterized against the same BER curves end-to-end.
+
+## 10. References
+
+1. Viterbi, A. J. *Convolutional Codes and Their Performance in Communication Systems*. Course handout, included locally as [Supporting Documentation/viterbi.pdf](Viterbi/Supporting%20Documentation/viterbi.pdf). Provides the original ACS recursion, trellis formulation, and asymptotic coding-gain analysis used as the algorithmic reference for both decoders in this project.
+2. *Hard and Soft Decision Decoding Using the Viterbi Algorithm*. Course handout, included locally as [Supporting Documentation/Hard_and_Soft_Decision_Decoding_Using_Viterbi_Algorithm.pdf](Viterbi/Supporting%20Documentation/Hard_and_Soft_Decision_Decoding_Using_Viterbi_Algorithm.pdf). Source for the soft vs hard branch-metric formulation in *Equations 3* and *4* and the ~2 dB soft-over-hard coding-gain expectation that the MATLAB sweep in §8 confirms.
+3. MathWorks. *Communications Toolbox — `poly2trellis`, `convenc`, `vitdec`*. Reference documentation for the trellis structure and `vitdec` soft/hard modes used by [Viterbi_Decoder_Project.m](Viterbi/coding/matlab/Viterbi_Decoder_Project.m) and the Simulink companion model.
+4. Intel/Altera. *Quartus Prime Standard 25.1 Lite — Timing Closure and Optimization User Guide*. Reference for the Slow 1100 mV 85 °C $F_{\max}$ corner and slack reporting conventions used in *Table 5*.
