@@ -78,22 +78,22 @@ This is the only place the soft and hard decoders differ.
 #### Soft Decoder
 Soft inputs $r_0, r_1$ are signed values centered around zero, where positive values lean toward bit `1` and negative values lean toward bit `0`. For an expected coded pair $(e_1, e_0)$, the branch metric is the dot product in *Equation 3*. A correctly received symbol contributes a positive value; a wrong one contributes a negative value of equal magnitude. Higher path metric is better.
 
-$$BM_{soft} = \bigl(e_1 = 1 \;?\; r_0 : -r_0\bigr) + \bigl(e_0 = 1 \;?\; r_1 : -r_1\bigr)$$
+$$BM_{\mathrm{soft}} = \begin{cases} +r_0 & e_1 = 1 \\ -r_0 & e_1 = 0 \end{cases} \;+\; \begin{cases} +r_1 & e_0 = 1 \\ -r_1 & e_0 = 0 \end{cases}$$
 (*Equation 3*)
 
 #### Hard Decoder
 Hard inputs collapse to single bits $\hat{r}_0, \hat{r}_1$. The branch metric is a $\{+1, -1\}$ agreement count, equivalent to negative Hamming distance, as shown in *Equation 4*. Same direction as the soft case: higher is better, and the rest of the ACS pipeline can stay identical.
 
-$$BM_{hard} = \bigl(e_1 = \hat{r}_0 \;?\; +1 : -1\bigr) + \bigl(e_0 = \hat{r}_1 \;?\; +1 : -1\bigr)$$
+$$BM_{\mathrm{hard}} = \begin{cases} +1 & e_1 = \hat{r}_0 \\ -1 & e_1 \neq \hat{r}_0 \end{cases} \;+\; \begin{cases} +1 & e_0 = \hat{r}_1 \\ -1 & e_0 \neq \hat{r}_1 \end{cases}$$
 (*Equation 4*)
 
 ### 3.4 Add-Compare-Select
 For each destination state $d$ at symbol time $n$, the ACS step takes the two incoming branches from predecessor states $p_0$ and $p_1$, adds the branch metric, and keeps the larger candidate, as shown in *Equations 5* and *6*.
 
-$$M'(d) = \max\Bigl(M(p_0) + BM(p_0 \!\to\! d), \; M(p_1) + BM(p_1 \!\to\! d)\Bigr)$$
+$$M'(d) = \max\Bigl(M(p_0) + BM(p_0 \to d),\; M(p_1) + BM(p_1 \to d)\Bigr)$$
 (*Equation 5*)
 
-$$\mathrm{survivor}(d) = \arg\max\Bigl(M(p_0) + BM(p_0 \!\to\! d), \; M(p_1) + BM(p_1 \!\to\! d)\Bigr)$$
+$$\mathrm{survivor}(d) = \arg\max\Bigl(M(p_0) + BM(p_0 \to d),\; M(p_1) + BM(p_1 \to d)\Bigr)$$
 (*Equation 6*)
 
 To handle the cold-start case, only state 0 is initialized to $M = 0$ and the other three states start at `METRIC_MIN = -(2^{15}-1)`. Branches whose predecessor sits at `METRIC_MIN` are skipped, so the trellis can only be entered from state 0 at $n = 0$. This avoids spurious survivors during the initial fill window.
@@ -124,7 +124,7 @@ The soft decoder is parameterized by `SOFT_W` (default 8) for the input width an
 
 A `NORMALIZE` parameter (default `1`) enables an **in-cycle** subtract-the-minimum path-metric rescaling at the end of each ACS step: the smallest reachable `next_path_metric[]` is subtracted from every reachable state before the registered update. Argmax is invariant under a constant offset across all states, so the decoded output is bit-exact identical to the un-normalized baseline (verified by re-running [tb_viterbi_soft_decoder_awgn.v](Viterbi/coding/verilog/tb_viterbi_soft_decoder_awgn.v) and reproducing *Table 3b* exactly), but the registered path metrics no longer drift with symbol count and the 16-bit signed range cannot saturate on arbitrarily long uninterrupted runs. States still pinned at `METRIC_MIN` (unreachable during cold-start fill) are left alone so the cold-start guard keeps working. Set `NORMALIZE = 0` to reproduce the original un-normalized synthesis exactly.
 
-The normalization is **in-cycle by design** — i.e., the 4-way min reduction and per-state subtract sit in series with the ACS comparator on the way to the path-metric register. A cheaper one-cycle-delayed pipelined offset (the form used by the hard decoder, §4.2) was prototyped and rejected: with the soft branch metric scaled to $\pm 2 \cdot (2^{SOFT_W-1}-1) \approx \pm 254$ per symbol, the resulting recurrence has unit-magnitude characteristic roots and noise drives a $\sqrt{N}$ random-walk oscillation in the corrected metric that overflows the 16-bit signed range somewhere between $10^5$ and $5\!\times\!10^5$ continuous symbols. The in-cycle form has no such recurrence (the registered metric is exactly post-subtract every cycle) at the cost of one extra adder layer in the ACS critical path.
+The normalization is **in-cycle by design** — i.e., the 4-way min reduction and per-state subtract sit in series with the ACS comparator on the way to the path-metric register. A cheaper one-cycle-delayed pipelined offset (the form used by the hard decoder, §4.2) was prototyped and rejected: with the soft branch metric scaled to $\pm 2 \cdot (2^{SOFT_W-1}-1) \approx \pm 254$ per symbol, the resulting recurrence has unit-magnitude characteristic roots and noise drives a $\sqrt{N}$ random-walk oscillation in the corrected metric that overflows the 16-bit signed range somewhere between $10^5$ and $5 \times 10^5$ continuous symbols. The in-cycle form has no such recurrence (the registered metric is exactly post-subtract every cycle) at the cost of one extra adder layer in the ACS critical path.
 
 ### 4.2 Hard Decoder (`viterbi_hard_decoder.v`)
 The hard decoder strips out the soft input ports and replaces them with two single-bit symbol pins (`rx0`, `rx1`). Branch metrics are now restricted to the set $\{-2, 0, +2\}$, so 16-bit path metrics are far wider than necessary; the width was kept identical to the soft variant for parameter symmetry. Everything else, including ACS, survivor shift, traceback, and output handshake, is identical to the soft version.
