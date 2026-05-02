@@ -164,7 +164,7 @@ Replaces the soft input ports with two single-bit symbol pins (`rx0`, `rx1`); br
 | | Soft decoder (in-cycle) | Hard decoder (pipelined-offset) |
 |---|---|---|
 | Placement | Min reduction + per-state subtract in series with ACS comparator | Min reduction over *registered* `path_metric[]`, captured in `min_offset_q`, subtracted next cycle |
-| Why this form | Pipelined-offset recurrence overflows at $\pm 254$ BM scale within $10^5$–$5\times 10^5$ symbols (random walk) | Bounded $\{-2, 0, +2\}$ BM keeps the residual oscillation well inside 16-bit signed |
+| Why this form | Pipelined-offset recurrence overflows at $\pm 254$ BM scale within $10^5\text{–}5\times 10^5$ symbols (random walk) | Bounded $\{-2, 0, +2\}$ BM keeps the residual oscillation well inside 16-bit signed |
 | $F_{\max}$ impact | Adds one adder layer to ACS path (~16 MHz cost, §7.2) | Min reduction parallel to ACS; baseline $F_{\max}$ essentially unchanged |
 
 </div>
@@ -229,7 +229,7 @@ The **hard** unit-test channel applies independent bit flips to each of the two 
 
 ### 5.2 RTL AWGN BER Sanity Sweeps
 
-Two companion testbenches ([tb_viterbi_soft_decoder_awgn.v](coding/verilog/tb_viterbi_soft_decoder_awgn.v) and [tb_viterbi_hard_decoder_awgn.v](coding/verilog/tb_viterbi_hard_decoder_awgn.v)) drive the DUTs against a true AWGN channel built from two 32-bit Galois LFSRs (CRC-32 polynomial) feeding a Box-Muller transform. Each coded bit is modulated to $\pm \mathrm{NOM\_LEVEL} + \sigma \cdot z$ with $\sigma = \mathrm{NOM\_LEVEL} / \sqrt{2 \cdot 10^{(E_b/N_0 - 3.01)/10}}$ (the 3.01 dB term is the rate-1/2 $E_s/E_b$ correction). The soft testbench saturate-quantizes to signed 8-bit; the hard testbench hard-slices the same noisy sample at zero before driving `rx0`/`rx1`. Both sweep $E_b/N_0 = 0\dots 8$ dB in 1 dB steps and run `TRIALS_PER_POINT = 50` independent 100-bit trials per point (5000 bits total) with a full DUT reset between trials, so the soft and hard tables are directly comparable on the same noise process. The trial structure predates `NORMALIZE = 1` and is kept so the unit-test sweep stays self-contained; the long continuous-stream sweep uses the cosim flow in §8.3.
+Two companion testbenches ([tb_viterbi_soft_decoder_awgn.v](coding/verilog/tb_viterbi_soft_decoder_awgn.v) and [tb_viterbi_hard_decoder_awgn.v](coding/verilog/tb_viterbi_hard_decoder_awgn.v)) drive the DUTs against a true AWGN channel built from two 32-bit Galois LFSRs (CRC-32 polynomial) feeding a Box-Muller transform. Each coded bit is modulated to $\pm \mathrm{NOM\_LEVEL} + \sigma \cdot z$ with $\sigma = \mathrm{NOM\_LEVEL} / \sqrt{2 \cdot 10^{(E_b/N_0 - 3.01)/10}}$ (the 3.01 dB term is the rate-1/2 $E_s/E_b$ correction). The soft testbench saturates and quantizes to signed 8-bit; the hard testbench hard-slices the same noisy sample at zero before driving `rx0`/`rx1`. Both sweep $E_b/N_0 = 0\dots 8$ dB in 1 dB steps and run `TRIALS_PER_POINT = 50` independent 100-bit trials per point (5000 bits total) with a full DUT reset between trials, so the soft and hard tables are directly comparable under the same AWGN construction. The trial structure predates `NORMALIZE = 1` and is kept so the unit-test sweep stays self-contained; the long continuous-stream sweep uses the cosim flow in §8.3.
 
 <div align="center">
 
