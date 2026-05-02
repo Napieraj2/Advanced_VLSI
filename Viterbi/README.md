@@ -611,7 +611,7 @@ The final RTL configuration is `PIPELINE = 1, NORMALIZE = 1` on both decoders, w
 
 </div>
 
-All four flows agree on the soft-vs-hard ordering and the expected ~2 dB soft-decision advantage. The short RTL AWGN testbenches are sanity checks only; the MATLAB/Simulink references and the long RTL cosim sweep ($10^6$–$2 \times 10^6$ bits per point) are the quantitative BER evidence.
+All four flows agree on the soft-vs-hard ordering and the expected ~2 dB soft-decision advantage. The short RTL AWGN testbenches are sanity checks only; the MATLAB/Simulink references and the long RTL cosim sweep ($10^6\text{–}2 \times 10^6$ bits per point) are the quantitative BER evidence.
 
 ## 9. Notes and Possible Extensions
 
