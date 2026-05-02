@@ -18,6 +18,7 @@ incremental_db/
 simulation/
 output_files/
 *.txt
+*.bak
 
 # Quartus TCL scripts (generated)
 *.tcl
@@ -25,3 +26,20 @@ output_files/
 # MATLAB
 *.asv
 *.fig
+
+# Simulink build/cache artifacts
+slprj/
+*.slxc
+*_cgxe.mexw64
+*.slx.r*
+*.autosave
+
+# Editor / source-control backups
+*.bak
+*.orig
+
+# VS Code: ignore personal settings, keep shared tasks/launch configs
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json

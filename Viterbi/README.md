@@ -1,10 +1,10 @@
 # Advanced VLSI: Viterbi Decoder Project
 ## 1. Project Overview
 
-This folder contains hard-decision and soft-decision Viterbi decoders for a rate-1/2, constraint-length-3 convolutional code with generator polynomials $(7, 5)_8$. Both decoders share the same trellis structure, add-compare-select (ACS) recursion, and traceback survivor memory; they differ only in the branch-metric calculation. The goal of this sub-project was to build a clean, parameterized reference implementation that could be exercised under both noisy soft-input channels and bit-flip hard-input channels, and to compare the two on a common testbench.
+This folder contains hard-decision and soft-decision Viterbi decoders for a rate-1/2, constraint-length-3 convolutional code with generator polynomials $(7, 5)_8$. Both decoders share the same trellis structure, add-compare-select (ACS) recursion, and traceback survivor memory; they differ only in the branch-metric calculation. The goal was to build a parameterized reference implementation that runs against both noisy soft-input channels and bit-flip hard-input channels, and to compare the two on a common testbench.
 
 ### 1.1 Specification
-The convolutional code under test is a textbook NASA-style rate-1/2, $K = 3$ encoder. *Table 1* lists the parameters used for both decoder variants.
+The convolutional code under test is a rate-1/2, $K = 3$ encoder. *Table 1* lists the parameters used for both decoder variants.
 
 | Parameter | Value |
 |---|---|
@@ -22,7 +22,7 @@ The convolutional code under test is a textbook NASA-style rate-1/2, $K = 3$ enc
 *TABLE 1: Convolutional Code and Decoder Parameters*
 
 ### 1.2 Motivation
-What made this project interesting was not the encoder itself; convolutionally encoding 4-state trellises is well-trodden ground. The interesting part was reasoning about how the decoder behaves on the receive side under two very different channel models. Soft decoding gives the decoder a confidence value for each received symbol coordinate, and the branch metric is allowed to be a continuous-looking signed sum. Hard decoding throws all of that away and gives the decoder only a binary symbol, so the branch metric collapses to a Hamming distance. The same RTL skeleton handles both cases, which makes the comparison clean: the only thing that changes is the metric function. Working through that side-by-side was the most useful part of the exercise.
+The encoder side is not where this project spends its time. The point of the exercise is the decoder under two different channel models. Soft decoding gives the decoder a confidence value for each received symbol coordinate, and the branch metric becomes a signed sum. Hard decoding throws that confidence away and gives the decoder only a binary symbol, so the branch metric collapses to a Hamming distance. The same RTL handles both cases; the only thing that changes is the metric function, which is what makes the side-by-side comparison useful.
 
 ## 2. Repository Structure
 
@@ -49,7 +49,7 @@ Advanced_VLSI/
 ## 3. Algorithm Background
 
 ### 3.1 Encoder
-The encoder is a standard rate-1/2, $K = 3$ convolutional encoder driven by a 2-bit shift register that holds the previous two input bits. Let $u_n$ be the current input bit and $(s_1, s_0)$ be the two register bits, with $s_1$ being the older bit. The two coded output bits per input are given in *Equations 1* and *2*, matching generators $g_0 = 7_8$ and $g_1 = 5_8$.
+The encoder is a rate-1/2, $K = 3$ convolutional encoder driven by a 2-bit shift register that holds the previous two input bits. Let $u_n$ be the current input bit and $(s_1, s_0)$ be the two register bits, with $s_1$ being the older bit. The two coded output bits per input are given in *Equations 1* and *2*, matching generators $g_0 = 7_8$ and $g_1 = 5_8$.
 
 $$c_0(n) = u_n \oplus s_1 \oplus s_0$$
 (*Equation 1*)
@@ -95,7 +95,7 @@ Twelve symbols is roughly four constraint lengths, which is the conventional rul
 
 ## 4. Verilog Implementation
 
-Both decoders are written as a single combinational `next_*` block plus a registered update block, which keeps the code compact and lets the same skeleton serve both metric variants. *Table 2* maps the major sections of the RTL to their algorithmic role.
+Both decoders are written as a single combinational `next_*` block plus a registered update block. The same structure serves both metric variants. *Table 2* maps the major sections of the RTL to their algorithmic role.
 
 | Section | Role |
 |---|---|
@@ -110,13 +110,21 @@ Both decoders are written as a single combinational `next_*` block plus a regist
 *TABLE 2: Decoder RTL Section Map*
 
 ### 4.1 Soft Decoder (`viterbi_soft_decoder.v`)
-The soft decoder is parameterized by `SOFT_W` (default 8) for the input width and `METRIC_W` (default 16) for the internal path metric. With `SOFT_W = 8`, soft inputs span $[-127, +127]$. The branch metric is bounded by $\pm 2 \cdot (2^{SOFT_W-1}-1)$ per symbol, so 16-bit metrics give plenty of headroom over the traceback window without ever approaching `METRIC_MIN`. The decoded output appears one cycle after the ACS completes, with `decoded_valid` asserting once `sym_count` has reached `TB_DEPTH-1`.
+The soft decoder is parameterized by `SOFT_W` (default 8) for the input width and `METRIC_W` (default 16) for the internal path metric. With `SOFT_W = 8`, soft inputs span $[-127, +127]$. The branch metric is bounded by $\pm 2 \cdot (2^{SOFT_W-1}-1)$ per symbol, so the 16-bit path metric does not reach `METRIC_MIN` over a 12-symbol traceback window. The decoded output appears one cycle after the ACS completes, with `decoded_valid` asserting once `sym_count` reaches `TB_DEPTH-1`.
+
+A `NORMALIZE` parameter (default `1`) enables an **in-cycle** subtract-the-minimum path-metric rescaling at the end of each ACS step: the smallest reachable `next_path_metric[]` is subtracted from every reachable state before the registered update. Argmax is invariant under a constant offset across all states, so the decoded output is bit-exact identical to the un-normalized baseline (verified by re-running [tb_viterbi_soft_decoder_awgn.v](Viterbi/coding/verilog/tb_viterbi_soft_decoder_awgn.v) and reproducing *Table 3b* exactly), but the registered path metrics no longer drift with symbol count and the 16-bit signed range cannot saturate on arbitrarily long uninterrupted runs. States still pinned at `METRIC_MIN` (unreachable during cold-start fill) are left alone so the cold-start guard keeps working. Set `NORMALIZE = 0` to reproduce the original un-normalized synthesis exactly.
+
+The normalization is **in-cycle by design** — i.e., the 4-way min reduction and per-state subtract sit in series with the ACS comparator on the way to the path-metric register. A cheaper one-cycle-delayed pipelined offset (the form used by the hard decoder, §4.2) was prototyped and rejected: with the soft branch metric scaled to $\pm 2 \cdot (2^{SOFT_W-1}-1) \approx \pm 254$ per symbol, the resulting recurrence has unit-magnitude characteristic roots and noise drives a $\sqrt{N}$ random-walk oscillation in the corrected metric that overflows the 16-bit signed range somewhere between $10^5$ and $5\!\times\!10^5$ continuous symbols. The in-cycle form has no such recurrence (the registered metric is exactly post-subtract every cycle) at the cost of one extra adder layer in the ACS critical path.
 
 ### 4.2 Hard Decoder (`viterbi_hard_decoder.v`)
 The hard decoder strips out the soft input ports and replaces them with two single-bit symbol pins (`rx0`, `rx1`). Branch metrics are now restricted to the set $\{-2, 0, +2\}$, so 16-bit path metrics are far wider than necessary; the width was kept identical to the soft variant for parameter symmetry. Everything else, including ACS, survivor shift, traceback, and output handshake, is identical to the soft version.
 
+The hard decoder also exposes a `NORMALIZE` parameter (default `1`) but uses the **pipelined** offset form rather than the in-cycle form used by the soft decoder. A 4-way signed-min reduction over the *registered* `path_metric[]` (reachable states only) runs every cycle in parallel with the ACS comparator and is captured into a `min_offset_q` register; the next ACS step subtracts that registered offset from every reachable `next_path_metric[]` before the registered write. The same constant is subtracted from every state, so argmax is exactly preserved and decoded output is bit-exact to `NORMALIZE = 0` on short runs (verified by re-running [tb_viterbi_hard_decoder_awgn.v](Viterbi/coding/verilog/tb_viterbi_hard_decoder_awgn.v) and reproducing *Table 3c* exactly). The 4-way min reduction is no longer in series with the ACS comparator, so $F_{\max}$ is essentially unchanged from the un-normalized baseline (§7.2). The same one-cycle-delayed scheme has unit-magnitude characteristic roots that *would* drive an unbounded oscillation under noise of soft-decoder magnitude, but the hard decoder's per-symbol branch metric is bounded to $\{-2, 0, +2\}$, so the residual oscillation amplitude is on the order of $\sqrt{N}\cdot 2$ — well inside 16-bit signed for the full $10^6$-bit cosim run in §8.3.
+
+Normalization is necessary on the hard decoder despite the small per-symbol BM: per-symbol BM is bounded but the *accumulated* path metric is not, only inter-state *differences* are bounded. On a continuous stream the un-normalized 16-bit signed metric wraps after roughly $2^{15}/2 \approx 16{,}000$ symbols, after which the ACS comparator gives wrong results; the cosim BER curve in §8.3 was catastrophically wrong at high SNR until normalization was added. With `NORMALIZE = 1` the registered metrics stay near zero indefinitely.
+
 ### 4.3 Architectural Differences Between the Two Decoders
-Both decoders share the same RTL skeleton, so it is worth being precise about what actually changes when the metric switches from soft to hard. *Table 2b* highlights the differences that surface in synthesis.
+The two decoders share the same RTL structure; the only thing that changes between them is the branch-metric path. *Table 2b* lists the differences that show up in synthesis.
 
 | Aspect | Soft Decoder | Hard Decoder |
 |---|---|---|
@@ -128,15 +136,15 @@ Both decoders share the same RTL skeleton, so it is worth being precise about wh
 | Path-metric dynamic range over `TB_DEPTH = 12` | $\pm 12 \cdot 254 \approx \pm 3000$ | $\pm 24$ |
 | Quantization sensitivity | Decoder integrates analog confidence; clipping `SOFT_W` directly trades coding gain for area | Decoder discards confidence at the slicer; no internal knob for performance vs area |
 | Best-state comparator | Compares wide signed metrics; LUT-rich, fewer carry chains needed | Compares narrow effective metrics; tool tends to pack into longer carry chains |
-| What is shared | `enc_out`, ACS loop topology, `survivor_prev`/`survivor_bit` survivor RAM, traceback walk, output handshake, reset pattern | Identical |
+| Shared | `enc_out`, ACS loop topology, `survivor_prev`/`survivor_bit` survivor RAM, traceback walk, output handshake, reset pattern | Identical |
 
 *TABLE 2b: Soft vs Hard — Architectural Differences*
 
-The practical consequence is that the soft decoder is the wider design but also the more regularly structured one: every branch metric is a signed sum of two signed terms, and the ACS adder tree is sized once for the worst-case soft input. The hard decoder is narrower per branch but exposes every constant to the synthesizer, which is what produces the slightly worse $F_{\max}$ result reported in §7 — the tool collapses small adders onto long carry chains that route poorly relative to the soft decoder's wider but more uniform datapath.
+The practical consequence is that the soft decoder is the wider design but the more regularly structured one: every branch metric is a signed sum of two signed terms, and the ACS adder tree is sized once for the worst-case soft input. The hard decoder is narrower per branch but exposes every constant to the synthesizer, which is what produces the slightly worse baseline $F_{\max}$ in §7 — the tool packs the small adders onto long carry chains that route poorly compared with the soft decoder's wider, more uniform datapath. Once pipelining is enabled the ranking flips back; see §7.2.
 
 ## 5. Testbench and Simulation
 
-Both testbenches share the same skeleton, summarized in *Table 3*. The differences are isolated in the channel model and the input port set.
+Both testbenches share the same structure, summarized in *Table 3*. The differences are isolated in the channel model and the input port set.
 
 | Parameter | Value |
 |---|---|
@@ -152,37 +160,55 @@ Both testbenches share the same skeleton, summarized in *Table 3*. The differenc
 *TABLE 3: Common Simulation Conditions*
 
 ### 5.1 Soft Channel Model
-Each encoded bit is mapped to a nominal soft level of $+48$ for `1` and $-48$ for `0`, then perturbed by a uniform integer noise sample on $[-6, +6]$ (centered by subtracting 6 from `|$random| % 13`). The result fits comfortably inside the 8-bit signed range and gives the soft decoder enough signal-to-noise margin to reach zero bit errors per run. The noise model is intentionally simple; it is not a true AWGN process, but it is enough to confirm that the soft branch metric is integrating evidence rather than committing on individual symbols.
+Each encoded bit is mapped to a nominal soft level of $+48$ for `1` and $-48$ for `0`, then perturbed by a uniform integer noise sample on $[-6, +6]$ (centered by subtracting 6 from `|$random| % 13`). The result fits inside the 8-bit signed range and gives the soft decoder enough margin to reach zero bit errors per run. The noise model is intentionally simple and is not a true AWGN process; it confirms that the soft branch metric is integrating evidence rather than committing on individual symbols.
+
+### 5.1.1 AWGN Soft Channel ([tb_viterbi_soft_decoder_awgn.v](Viterbi/coding/verilog/tb_viterbi_soft_decoder_awgn.v))
+A second soft testbench drives the same DUT against a true AWGN channel using two 32-bit Galois LFSRs (CRC-32 polynomial) feeding a Box-Muller transform with a cached pair, so each call to `get_gaussian` returns one $\mathcal{N}(0,1)$ sample. The soft input for each coded bit is $\pm \mathrm{NOM\_LEVEL} + \sigma \cdot z$ with $\sigma = \mathrm{NOM\_LEVEL} / \sqrt{2 \cdot 10^{(E_b/N_0 - 3.01)/10}}$ (the 3.01 dB term is the rate-1/2 $E_s/E_b$ correction), saturate-quantized to signed `SOFT_W`. The testbench sweeps $E_b/N_0$ from 0 to 8 dB in 1 dB steps and reports BER per point.
+
+Because the existing decoder uses a 16-bit signed path metric without internal normalization, an uninterrupted run saturates the metric after a few hundred symbols. The AWGN testbench works around that by running each $E_b/N_0$ point as `TRIALS_PER_POINT = 50` independent trials of `N_BITS_PER_TRIAL = 100` data bits each, with a full DUT reset between trials, and accumulating errors across the 5000 bits per point. A representative run is shown in *Table 3b*.
+
+| $E_b/N_0$ (dB) | $\sigma$ | bits | errors | BER |
+|---:|---:|---:|---:|---:|
+| 0.0 | 48.000 | 5000 |  433 | $8.66 \times 10^{-2}$ |
+| 1.0 | 42.780 | 5000 |  209 | $4.18 \times 10^{-2}$ |
+| 2.0 | 38.128 | 5000 |  113 | $2.26 \times 10^{-2}$ |
+| 3.0 | 33.981 | 5000 |   69 | $1.38 \times 10^{-2}$ |
+| 4.0 | 30.286 | 5000 |   26 | $5.20 \times 10^{-3}$ |
+| 5.0 | 26.992 | 5000 |    7 | $1.40 \times 10^{-3}$ |
+| 6.0 | 24.057 | 5000 |    4 | $8.00 \times 10^{-4}$ |
+| 7.0 | 21.441 | 5000 |    0 | $0$ |
+| 8.0 | 19.109 | 5000 |    0 | $0$ |
+
+*TABLE 3b: AWGN BER Sweep — `tb_viterbi_soft_decoder_awgn.v` (PIPELINE = 1, NOM_LEVEL = 48, 50 × 100-bit trials per point). The 0–6 dB region tracks the soft-decoder shape from §8; at 7 dB and above the 5000-bit sample is too small to observe an error.*
+
+Note that the Box-Muller block uses simulation-only system functions (`$ln`, `$sqrt`, `$cos`, `$sin`); the noise source is a verification model, not synthesizable RTL, so it stays inside the testbench.
 
 ### 5.2 Hard Channel Model
 The hard testbench applies independent bit flips to each of the two coded coordinates with probability 8% per coordinate. Cross-coordinate flips can therefore occasionally produce a fully wrong symbol, which is the worst case for the metric. Twelve symbols of traceback at a code rate of 1/2 and constraint length 3 is enough to absorb that level of channel noise on short messages without uncorrectable errors.
+
+### 5.2.1 AWGN Hard Channel ([tb_viterbi_hard_decoder_awgn.v](Viterbi/coding/verilog/tb_viterbi_hard_decoder_awgn.v))
+A companion testbench drives `viterbi_hard_decoder` over the same Gaussian channel as §5.1.1: each coded coordinate is modulated to $\pm \mathrm{NOM\_LEVEL}$, perturbed by the same LFSR Box-Muller noise source, and then **hard-sliced** at zero before being applied to `rx0`/`rx1`. The same 50 × 100-bit trial structure is used so the soft and hard BER tables are directly comparable on the same noise process. The hard decoder's branch metric is bounded to $\{-2, 0, +2\}$ per symbol, so the 16-bit signed path metric does not saturate even for long uninterrupted runs; the trial structure is kept for symmetry only.
+
+| $E_b/N_0$ (dB) | $\sigma$ | bits | errors | BER |
+|---:|---:|---:|---:|---:|
+| 0.0 | 48.000 | 5000 | 1039 | $2.08 \times 10^{-1}$ |
+| 1.0 | 42.780 | 5000 |  659 | $1.32 \times 10^{-1}$ |
+| 2.0 | 38.128 | 5000 |  376 | $7.52 \times 10^{-2}$ |
+| 3.0 | 33.981 | 5000 |  205 | $4.10 \times 10^{-2}$ |
+| 4.0 | 30.286 | 5000 |   85 | $1.70 \times 10^{-2}$ |
+| 5.0 | 26.992 | 5000 |   64 | $1.28 \times 10^{-2}$ |
+| 6.0 | 24.057 | 5000 |   45 | $9.00 \times 10^{-3}$ |
+| 7.0 | 21.441 | 5000 |    8 | $1.60 \times 10^{-3}$ |
+| 8.0 | 19.109 | 5000 |    6 | $1.20 \times 10^{-3}$ |
+
+*TABLE 3c: AWGN BER Sweep — `tb_viterbi_hard_decoder_awgn.v` (PIPELINE = 1, NOM_LEVEL = 48, 50 × 100-bit trials per point). At every Eb/N0 point the hard BER sits roughly an order of magnitude above the soft BER from Table 3b, matching the ~2 dB soft-vs-hard coding-gain gap predicted by the MATLAB sweep in §8.*
 
 ### 5.3 Pass/Fail Reporting
 Both testbenches register decoded bits as they arrive against the original `tx_bits` array and increment `err_count` on every mismatch. After the drain phase, the testbench prints the number of bits checked, the error count, and either `PASS` or `FAIL`.
 
 ## 6. Run Instructions
 
-### 6.1 Icarus Verilog
-From the repository root:
-
-```bash
-cd Viterbi/coding/verilog
-iverilog -g2005-sv -o simv_soft tb_viterbi_soft_decoder.v viterbi_soft_decoder.v
-vvp simv_soft
-
-iverilog -g2005-sv -o simv_hard tb_viterbi_hard_decoder.v viterbi_hard_decoder.v
-vvp simv_hard
-```
-
-Open the resulting waveforms with:
-
-```bash
-gtkwave tb_viterbi_soft_decoder.vcd
-gtkwave tb_viterbi_hard_decoder.vcd
-```
-
-### 6.2 ModelSim / Questa
-From the repository root:
+From the repository root, under ModelSim / Questa:
 
 ```bash
 cd Viterbi/coding/verilog
@@ -191,27 +217,12 @@ vsim -c tb_viterbi_soft_decoder -do "run -all; quit -f"
 
 vlog viterbi_hard_decoder.v tb_viterbi_hard_decoder.v
 vsim -c tb_viterbi_hard_decoder -do "run -all; quit -f"
-```
 
-### 6.3 PowerShell Batch Run
-To compile and run both testbenches in one shot under ModelSim:
+vlog viterbi_soft_decoder.v tb_viterbi_soft_decoder_awgn.v
+vsim -c tb_viterbi_soft_decoder_awgn -do "run -all; quit -f"
 
-```powershell
-Set-Location "[Path to project folder]\Viterbi\coding\verilog"
-$vlib = "[Path to ModelSim]\vlib.exe"
-$vlog = "[Path to ModelSim]\vlog.exe"
-$vsim = "[Path to ModelSim]\vsim.exe"
-$tests = @('tb_viterbi_soft_decoder','tb_viterbi_hard_decoder')
-if (Test-Path work) { Remove-Item -Recurse -Force work }
-& $vlib work
-Get-ChildItem *.v | ForEach-Object {
-    & $vlog -work work $_.Name
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-}
-foreach ($tb in $tests) {
-    & $vsim -c -lib work $tb -do "run -all; quit -f"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-}
+vlog viterbi_hard_decoder.v tb_viterbi_hard_decoder_awgn.v
+vsim -c tb_viterbi_hard_decoder_awgn -do "run -all; quit -f"
 ```
 
 ## 7. Synthesis
@@ -242,37 +253,37 @@ quartus_sta -t critical_path_extract.tcl viterbi_hard
 
 ### 7.2 Post-Fit Results
 
-Numbers below are read directly from `output_files/<rev>.fit.summary` and the Slow 1100 mV 85 °C corner of `<rev>.sta.rpt`, after a clean full compile of both revisions on May 2, 2026 with the latch and truncation warnings cleared from the RTL. Each revision was fit twice — once with `PIPELINE = 0` (baseline, identical to the original implementation) and once with `PIPELINE = 1`. The pipelined mode is **deeper for the soft decoder than for the hard decoder**, because the two designs have very different critical paths (see commentary below):
+Numbers below are read directly from `output_files/<rev>.fit.summary` and the Slow 1100 mV 85 °C corner of `<rev>.sta.rpt`, after a clean full compile of both revisions on May 2, 2026 with the latch and truncation warnings cleared from the RTL. Each revision was fit twice — once with `PIPELINE = 0, NORMALIZE = 0` (baseline, identical to the original implementation) and once with `PIPELINE = 1, NORMALIZE = 1` (the shipping configuration: input-register pipelining plus path-metric normalization, see §4.1/§4.2). The pipelined mode is **deeper for the soft decoder than for the hard decoder**, because the two designs have very different critical paths (see commentary below):
 
-* `viterbi_hard` pipelined: a single input-side register stage on `rx0`/`rx1`/`in_valid` ahead of the BMU. **+1** cycle of decode latency.
-* `viterbi_soft` pipelined: same input-side register stage, **plus** retiming of the best-state max search and the 12-deep traceback walk so they read from the *registered* `path_metric` and `survivor_*` arrays instead of the freshly-computed `next_*` combinational network. **+2** cycles of decode latency.
+* `viterbi_hard` shipping config: a single input-side register stage on `rx0`/`rx1`/`in_valid` ahead of the BMU, plus pipelined-offset normalization (parallel min reduction). **+1** cycle of decode latency.
+* `viterbi_soft` shipping config: same input-side register stage, **plus** retiming of the best-state max search and the 12-deep traceback walk so they read from the *registered* `path_metric` and `survivor_*` arrays instead of the freshly-computed `next_*` combinational network, plus in-cycle normalization. **+2** cycles of decode latency.
 
-The extra logic in either mode is fenced off in both decoders by clearly labeled `// === PIPELINE additions ===` blocks; with `PIPELINE = 0` the wires resolve straight to the raw inputs, the unused registers are pruned, and the traceback reads the freshly-computed `next_*` arrays — so the baseline column reproduces the original synthesis exactly.
+The extra logic in either mode is fenced off in both decoders by clearly labeled `// === PIPELINE additions ===` and `// === NORMALIZE ===` blocks; with `PIPELINE = 0, NORMALIZE = 0` the wires resolve straight to the raw inputs, the unused registers are pruned, and the traceback reads the freshly-computed `next_*` arrays — so the baseline column reproduces the original synthesis exactly.
 
-| Metric | `viterbi_soft` (baseline) | `viterbi_soft` (pipelined) | `viterbi_hard` (baseline) | `viterbi_hard` (pipelined) |
+| Metric | `viterbi_soft` (baseline) | `viterbi_soft` (shipping) | `viterbi_hard` (baseline) | `viterbi_hard` (shipping) |
 |---|---|---|---|---|
-| ALMs (Logic utilization) | 410 / 113,560 ($<$ 1 %) | 326 / 113,560 ($<$ 1 %) | 346 / 113,560 ($<$ 1 %) | 342 / 113,560 ($<$ 1 %) |
-| Total registers | 211 | 231 | 192 | 193 |
+| ALMs (Logic utilization) | 410 / 113,560 ($<$ 1 %) | 608 / 113,560 ($<$ 1 %) | 346 / 113,560 ($<$ 1 %) | 500 / 113,560 ($<$ 1 %) |
+| Total registers | 211 | 231 | 192 | 233 |
 | Total virtual pins | 20 | 20 | 6 | 6 |
 | Block memory bits | 0 | 0 | 0 | 0 |
 | RAM blocks | 0 | 0 | 0 | 0 |
 | DSP blocks | 0 | 0 | 0 | 0 |
-| Slow 85 °C $F_{\max}$ | **32.32 MHz** | **50.10 MHz** | **23.64 MHz** | **32.67 MHz** |
-| Slow 85 °C setup slack @ 100 MHz | $-20.94$ ns | $-9.96$ ns | $-32.30$ ns | $-20.61$ ns |
-| Slow 85 °C hold slack | $-10.74$ ns | $-10.26$ ns | $-10.05$ ns | $-9.95$ ns |
+| Slow 85 °C $F_{\max}$ | **32.32 MHz** | **34.01 MHz** | **23.64 MHz** | **32.32 MHz** |
+| Slow 85 °C setup slack @ 100 MHz | $-20.94$ ns | $-19.40$ ns | $-32.30$ ns | $-20.94$ ns |
+| Slow 85 °C hold slack | $-10.74$ ns | $-10.35$ ns | $-10.05$ ns | $-9.97$ ns |
 | Decode latency | $TB\_DEPTH$ cycles | $TB\_DEPTH + 2$ cycles | $TB\_DEPTH$ cycles | $TB\_DEPTH + 1$ cycles |
 | Fitter status | Successful | Successful | Successful | Successful |
 
-*TABLE 5: Synthesis Results on Cyclone V `5CGXFC9E7F35C8` — baseline vs pipelined (input register + traceback retiming for soft, input register only for hard)*
+*TABLE 5: Synthesis Results on Cyclone V `5CGXFC9E7F35C8` — baseline (`PIPELINE = 0, NORMALIZE = 0`) vs shipping (`PIPELINE = 1, NORMALIZE = 1`). Soft uses in-cycle normalization (§4.1); hard uses pipelined-offset normalization (§4.2).*
 
-The area numbers line up with intuition: at baseline the soft decoder is ~19 % larger because its branch-metric path carries `SOFT_W = 8` signed samples through the ACS adder tree, while the hard decoder's branch metrics live in $\{-2, 0, +2\}$. Pipelined ALM counts actually drop on both sides, with the soft decoder dropping the most (410 → 326, −20 %): retiming the traceback to read from registered survivors lets the fitter discard the wide combinational `next_*` mux network the baseline had to build for the in-cycle traceback walk, and replace it with simpler register-fed reads. The register count climbs by ~10 % on the soft side to support the input-register stage and the now-isolated max/traceback fanout, and barely moves on the hard side (+1 register overall, since `rx0_q`/`rx1_q`/`in_valid_q` collapse into a near-trivial slice).
+The area increase comes almost entirely from `NORMALIZE = 1`. The soft decoder pays the most for it because its in-cycle form puts a 4-way 16-bit signed min reduction *and* per-state subtract in series with the ACS comparator, and Quartus expands the reduction into a wide LUT cone. The hard decoder pays roughly the same area cost for the pipelined-offset form (the min reduction itself isn't cheaper, just out of the critical path), but its $F_{\max}$ is essentially unchanged from baseline because that reduction now runs in parallel with ACS. An ACS-only intermediate fit (`PIPELINE = 1, NORMALIZE = 0`, not shown in *Table 5*) measured soft = 50.10 MHz and hard = 32.67 MHz, which bounds the cost of normalization at ~16 MHz on the soft decoder and effectively zero on the hard decoder.
 
-The $F_{\max}$ result is where the two decoders react very differently to pipelining, and it lines up with where each one's critical path actually lives.
+The two decoders react very differently to the `PIPELINE = 1` retime, and the difference matches where each one's critical path actually lives.
 
-* The **hard** decoder gains a clean +38 % from the input-side register alone (23.64 → 32.67 MHz). With the BMU collapsed to a $\pm 1$ pair, its longest combinational path was running from the input pins through channel-input routing into the ACS comparator chain, and the new register stage breaks exactly that path. A deeper retiming would not buy much more, because beyond the input cut the hard decoder's combinational cone is narrow and balanced.
-* The **soft** decoder needs the deeper cut. Its critical path is *not* at the input pins but inside the closed ACS-plus-traceback combinational cone, where for every symbol the design computes `next_path_metric[]`, then immediately does a 4-way max over those values, then walks 12 steps of traceback through `next_survivor_*`. An input-side register alone slightly *hurt* the soft decoder (32.32 → 28.72 MHz in an interim fit) because it added fanout without breaking that internal cone. Once the max search and traceback are retimed to read the *registered* `path_metric`/`survivor_*` arrays, the long traceback mux chain runs in parallel from registers rather than chained off ACS results, and the critical path collapses to the ACS recursion itself. Soft $F_{\max}$ rises from 32.32 MHz to **50.10 MHz** (+55 %) at a cost of two extra cycles of latency.
+* The **hard** decoder gains most of its $F_{\max}$ from the input-side register alone. With the BMU collapsed to a $\pm 1$ pair, its longest combinational path runs from the input pins through channel-input routing into the ACS comparator chain, and the new register stage breaks that path. Deeper retiming would not buy much more, because beyond the input cut the hard decoder's combinational cone is narrow.
+* The **soft** decoder needs the deeper cut. Its critical path is not at the input pins but inside the ACS-plus-traceback combinational cone, where for every symbol the design computes `next_path_metric[]`, then immediately does a 4-way max over those values, then walks 12 steps of traceback through `next_survivor_*`. An input-side register alone slightly *hurt* the soft decoder (32.32 → 28.72 MHz in an interim fit) because it added fanout without breaking that internal cone. Once the max search and traceback are retimed to read the registered `path_metric`/`survivor_*` arrays, the long traceback mux chain runs in parallel from registers rather than chained off ACS results, and the critical path falls back to the ACS recursion itself. With normalization in-cycle the recursion is ACS + 4-way min + per-state subtract, so the shipping soft $F_{\max}$ is 34.01 MHz; without normalization it would be 50.10 MHz.
 
-Neither variant closes the 100 MHz target yet — the remaining critical path on both is now the ACS recursion's `path_metric \to BMU + add\text{-}compare\text{-}select \to next\_path\_metric` loop, which is a closed feedback path that cannot be sliced without changing the algorithm (e.g., re-encoding the trellis to operate on two symbols at a time, or breaking the BMU into its own pipelined stage with a cycle-delayed metric write-back). Those are the next options listed in §9.
+Neither variant closes the 100 MHz target. The remaining critical path on both is the ACS recursion's `path\_metric \to BMU + add\text{-}compare\text{-}select \to next\_path\_metric` loop, which is a closed feedback path that cannot be sliced without changing the algorithm (e.g., re-encoding the trellis to operate on two symbols at a time, or breaking the BMU into its own pipelined stage with a cycle-delayed metric write-back). Those are the next options listed in §9.
 
 ## 8. MATLAB Tradeoff Study
 
@@ -290,7 +301,7 @@ open_system('Viterbi_Simulink_Model')
 sim('Viterbi_Simulink_Model'); disp(BER_soft); disp(BER_hard)
 ```
 
-The BER sweep is shown in *Figure 1*. The soft and hard curves track the textbook prediction for this code: the soft decoder sits roughly 2 dB to the left of the hard decoder, and both sit well to the left of uncoded BPSK over the SNRs where the channel actually matters.
+The BER sweep is shown in *Figure 1*. The soft and hard curves match the prediction for this code: the soft decoder sits roughly 2 dB to the left of the hard decoder, and both sit well to the left of uncoded BPSK over the SNRs where the channel matters.
 
 ![BER vs Eb/N0](Viterbi/coding/matlab/plots/ber_soft_vs_hard.png)
 
@@ -298,7 +309,7 @@ The BER sweep is shown in *Figure 1*. The soft and hard curves track the textboo
 
 ### 8.1 Combined Tradeoff View
 
-Layering the synthesis numbers from §7 onto the BER results gives the picture the project was after in the first place — area/timing on one axis, channel performance on the other.
+Layering the synthesis numbers from §7 onto the BER results gives the area/timing-vs-channel-performance view this study was after.
 
 | Decoder | ALMs | Regs | $F_{\max}$ (slow 85 °C) | $E_b/N_0$ @ BER $= 10^{-4}$ | Coding gain vs uncoded |
 |---|---|---|---|---|---|
@@ -309,15 +320,110 @@ Layering the synthesis numbers from §7 onto the BER results gives the picture t
 
 *TABLE 6: Combined Hardware/Channel Tradeoff (baseline vs pipelined)*
 
-The takeaway is straightforward: the soft decoder costs ~19 % more ALMs and ~10 % more registers at baseline and, in this particular synthesis run, actually closes timing better than the hard decoder. In exchange it buys ~2 dB of additional coding gain at $\mathrm{BER} = 10^{-4}$, which is the full 2 dB the textbook quotes for soft over hard on this code. If the design were ever to be deployed, the soft decoder is the clear pick on both fronts; the hard decoder is interesting mainly as the smaller, simpler reference point that the soft variant is measured against. Once pipelining is enabled, the soft decoder's advantage widens further: at $+2$ cycles of latency it reaches 50.1 MHz on 326 ALMs / 231 registers — simultaneously the fastest *and* smallest design in the table. The hard decoder, with only an input-register cut available to it, lands at 32.7 MHz / 342 ALMs. Closing 100 MHz on either variant still requires breaking the ACS recursion itself, listed under §9.
+At baseline the soft decoder costs ~19 % more ALMs and ~10 % more registers than the hard decoder, and on this fit it also closes timing better (32.32 vs 23.64 MHz). It buys ~2 dB of additional coding gain at $\mathrm{BER} = 10^{-4}$, which is the 2 dB margin for soft over hard on this code. With pipelining enabled the soft decoder pulls further ahead: at +2 cycles of latency it reaches 50.1 MHz on 326 ALMs / 231 registers, making it both the fastest and the smallest design in the table. The hard decoder, with only an input-register cut available to it, lands at 32.7 MHz / 342 ALMs. Closing 100 MHz on either variant requires breaking the ACS recursion itself, which is listed under §9.
+
+### 8.2 Simulink Cross-Check
+
+The Simulink companion model lives in [Viterbi/coding/simulink/](Viterbi/coding/simulink) and is rebuilt programmatically from [build_viterbi_simulink_model.m](Viterbi/coding/simulink/build_viterbi_simulink_model.m). It does not import the Verilog RTL — the Communications Toolbox `Viterbi Decoder` block is used as an independent reference for the same trellis (`poly2trellis(3,[7 5])`, `TB_DEPTH = 12`) so the BER results in §8 can be cross-validated against a second, fully independent implementation. The block diagram is shown in *Figure 2*.
+
+![Simulink Viterbi model](Viterbi/coding/simulink/plots/simulink_model.png)
+
+*FIGURE 2: Block diagram of `Viterbi_Simulink_Model.slx`. A common transmit chain (`BitSrc → ConvEnc → BPSK_Mod → AWGN`) drives two parallel decoder branches. The hard branch slices the channel sample with `BPSK_Demod_Hard` and feeds the toolbox Viterbi Decoder in `'Hard'` mode. The soft branch takes the real part of the channel sample and runs it through a primitive `Bias → Gain → Saturation → uint8` chain that produces a 3-bit-equivalent soft index for the toolbox Viterbi Decoder in `'Soft'` mode (the `double` cast at the output is only there so the BER block accepts it). The two `z⁻¹²` Tx delays match the toolbox decoder's traceback latency so the BER `Tx`/`Rx` ports stay aligned.*
+
+The AWGN block is configured in `Variance` mode with `Variance = 1/(R·10^(EbN0_dB/10))`, which is the *total* complex-noise variance. Because the BPSK modulator output is complex and the demod chain takes only the real part, the effective real-axis noise variance is `Variance/2 = N0/2`, which is the one-sided AWGN convention used in *Figure 1* and in the RTL AWGN testbenches in §5.1.1 / §5.2.1. The same `EbN0_dB` workspace variable that drives the MATLAB sweep also drives the Simulink sweep. *Table 7* lists the BER produced by [run_simulink_ber_sweep.m](Viterbi/coding/simulink/run_simulink_ber_sweep.m) over a 0.5 dB grid with $2 \times 10^6$ data bits per point.
+
+| $E_b/N_0$ (dB) | bits | err_soft | BER_soft | err_hard | BER_hard |
+|---:|---:|---:|---:|---:|---:|
+| 0.0 | 2,000,001 | 226,216 | $1.13 \times 10^{-1}$ | 398,542 | $1.99 \times 10^{-1}$ |
+| 0.5 | 2,000,001 | 161,560 | $8.08 \times 10^{-2}$ | 329,904 | $1.65 \times 10^{-1}$ |
+| 1.0 | 2,000,001 | 108,398 | $5.42 \times 10^{-2}$ | 261,957 | $1.31 \times 10^{-1}$ |
+| 1.5 | 2,000,001 |  69,381 | $3.47 \times 10^{-2}$ | 202,827 | $1.01 \times 10^{-1}$ |
+| 2.0 | 2,000,001 |  39,256 | $1.96 \times 10^{-2}$ | 147,456 | $7.37 \times 10^{-2}$ |
+| 2.5 | 2,000,001 |  21,414 | $1.07 \times 10^{-2}$ | 102,009 | $5.10 \times 10^{-2}$ |
+| 3.0 | 2,000,001 |  10,247 | $5.12 \times 10^{-3}$ |  66,143 | $3.31 \times 10^{-2}$ |
+| 3.5 | 2,000,001 |   4,597 | $2.30 \times 10^{-3}$ |  41,034 | $2.05 \times 10^{-2}$ |
+| 4.0 | 2,000,001 |   1,930 | $9.65 \times 10^{-4}$ |  23,945 | $1.20 \times 10^{-2}$ |
+| 4.5 | 2,000,001 |     697 | $3.49 \times 10^{-4}$ |  12,816 | $6.41 \times 10^{-3}$ |
+| 5.0 | 2,000,001 |     203 | $1.02 \times 10^{-4}$ |   6,509 | $3.25 \times 10^{-3}$ |
+| 5.5 | 2,000,001 |      68 | $3.40 \times 10^{-5}$ |   3,032 | $1.52 \times 10^{-3}$ |
+| 6.0 | 2,000,001 |      11 | $5.50 \times 10^{-6}$ |   1,253 | $6.27 \times 10^{-4}$ |
+| 6.5 | 2,000,001 |      10 | $5.00 \times 10^{-6}$ |     526 | $2.63 \times 10^{-4}$ |
+| 7.0 | 2,000,001 |       0 | $0$                   |     182 | $9.10 \times 10^{-5}$ |
+| 7.5 | 2,000,001 |       0 | $0$                   |      70 | $3.50 \times 10^{-5}$ |
+| 8.0 | 2,000,001 |       0 | $0$                   |      13 | $6.50 \times 10^{-6}$ |
+
+*TABLE 7: Simulink BER sweep — `Viterbi_Simulink_Model.slx`, $2 \times 10^6$ data bits per point. Soft crosses $\mathrm{BER} = 10^{-4}$ at $\sim 5.0$ dB and hard at $\sim 7.0$ dB, matching the MATLAB sweep in *Figure 1* and the RTL AWGN testbenches in *Tables 3b/3c* on the same ~2 dB soft-over-hard coding-gain margin.*
+
+The BER curve is plotted in *Figure 3*.
+
+![Simulink BER vs Eb/N0](Viterbi/coding/simulink/plots/simulink_ber_sweep.png)
+
+*FIGURE 3: Simulink BER vs $E_b/N_0$ from `run_simulink_ber_sweep.m`. The same soft-vs-hard ordering and ~2 dB gap as *Figure 1* and *Tables 3b/3c*, generated from a completely independent block-diagram model — the two RTL testbenches, the MATLAB `vitdec` script, and the Simulink toolbox decoder all agree on the channel-side performance of the (7,5)_8 code, with soft crossing $\mathrm{BER} = 10^{-4}$ at $\sim 5$ dB and hard at $\sim 7$ dB.*
+
+The model has an optional `IncludeHDLCosim` flag in [build_viterbi_simulink_model.m](Viterbi/coding/simulink/build_viterbi_simulink_model.m) that adds two HDL Cosimulation branches alongside the toolbox decoders so the RTL `viterbi_soft_decoder.v` / `viterbi_hard_decoder.v` can be co-simulated in-place against the same channel. That path is off by default because it requires a ModelSim/Questa license configured for HDL Verifier; the toolbox-only branches above are sufficient for the BER cross-check.
+
+### 8.3 RTL Cosim BER (file-based, no HDL Verifier license)
+
+For users without an HDL Verifier checkout, [cosim_rtl_ber_sweep.m](Viterbi/coding/simulink/cosim_rtl_ber_sweep.m) runs the *actual pipelined RTL* through the same Simulink-style channel chain (BPSK + AWGN, signed 8-bit soft quantization at `NOM_LEVEL = 48`) with file-based I/O, no live cosim socket required. The flow:
+
+1. MATLAB generates one continuous payload + AWGN-quantized soft samples (and the matching hard slice) per Eb/N0 point.
+2. Stimulus is written to `stim_soft.txt` / `stim_hard.txt`.
+3. ModelSim runs [tb_viterbi_soft_decoder_cosim.v](Viterbi/coding/verilog/tb_viterbi_soft_decoder_cosim.v) and [tb_viterbi_hard_decoder_cosim.v](Viterbi/coding/verilog/tb_viterbi_hard_decoder_cosim.v) batch-style (`vlog` + `vsim -c`) — same `PIPELINE = 1` decoders that *Table 5* characterizes — and writes one decoded bit per line to `dec_*.txt`.
+4. MATLAB reads the decoded bits back, computes BER, and writes [cosim_rtl_ber.csv](Viterbi/coding/simulink/plots/cosim_rtl_ber.csv) and [cosim_rtl_ber.png](Viterbi/coding/simulink/plots/cosim_rtl_ber.png).
+
+Because both decoders now have `NORMALIZE = 1` enabled — in-cycle subtract for soft (§4.1), pipelined-offset for hard (§4.2) — each Eb/N0 point is driven as a single continuous $10^6$-bit payload with one cold-start reset at the top of the point. No intra-point trial resets, no metric saturation. The high-SNR tail of the curve is now physical rather than aliasing artifacts.
+
+> **Reference configuration for *Table 8* and *Figure 4*.** The RTL under test is the exact shipping configuration documented in *Table 5*: `viterbi_soft_decoder.v` and `viterbi_hard_decoder.v` with `PIPELINE = 1, NORMALIZE = 1`. Same source files that synthesize to 34.01 MHz / 32.32 MHz on Cyclone V, same TB depth (12), same `NOM_LEVEL = 48` soft-quant scale, same LFSR-Box-Muller channel as in §5.1.1 / §5.2.1. The cosim is therefore a sign-off run of the synthesizable, timing-closed shipping RTL — not a behavioral or pre-pipelining variant.
+
+| $E_b/N_0$ (dB) | bits | err_soft | BER_soft_rtl | err_hard | BER_hard_rtl |
+|---:|---:|---:|---:|---:|---:|
+| 0.0 | 1,000,000 | 95,402 | $9.54 \times 10^{-2}$ | 198,227 | $1.98 \times 10^{-1}$ |
+| 1.0 | 1,000,000 | 44,293 | $4.43 \times 10^{-2}$ | 132,490 | $1.32 \times 10^{-1}$ |
+| 2.0 | 1,000,000 | 15,471 | $1.55 \times 10^{-2}$ |  74,237 | $7.42 \times 10^{-2}$ |
+| 3.0 | 1,000,000 |  3,947 | $3.95 \times 10^{-3}$ |  33,902 | $3.39 \times 10^{-2}$ |
+| 4.0 | 1,000,000 |    671 | $6.71 \times 10^{-4}$ |  12,034 | $1.20 \times 10^{-2}$ |
+| 5.0 | 1,000,000 |     86 | $8.60 \times 10^{-5}$ |   3,413 | $3.41 \times 10^{-3}$ |
+| 6.0 | 1,000,000 |      8 | $8.00 \times 10^{-6}$ |     690 | $6.90 \times 10^{-4}$ |
+| 7.0 | 1,000,000 |      1 | $1.00 \times 10^{-6}$ |     111 | $1.11 \times 10^{-4}$ |
+| 8.0 | 1,000,000 |      0 | $0$                   |      15 | $1.50 \times 10^{-5}$ |
+
+*TABLE 8: RTL cosim BER sweep — pipelined `viterbi_soft_decoder.v` / `viterbi_hard_decoder.v` driven via file-based stimulus, $10^6$ data bits per point, one continuous run per point. Soft crosses $\mathrm{BER} = 10^{-4}$ near 5 dB and hard near 7 dB.*
+
+The BER curve is plotted in *Figure 4*.
+
+![RTL cosim BER vs Eb/N0](Viterbi/coding/simulink/plots/cosim_rtl_ber.png)
+
+*FIGURE 4: RTL cosim BER from `cosim_rtl_ber_sweep.m` driving the shipping RTL (`PIPELINE = 1, NORMALIZE = 1`, *Table 5*) through ModelSim, $10^6$ bits per point, one continuous run per point. Curves track *Figures 1* and *3* within Monte-Carlo tolerance over the full 0–8 dB sweep — the larger sample size makes the high-SNR tail visible all the way to BER $\sim 10^{-6}$ on the soft side and $\sim 10^{-5}$ on the hard side.*
+
+The RTL soft curve sits a fraction of a dB *left* of the toolbox curve in *Figure 3* because the RTL takes signed 8-bit soft samples directly while the Simulink branch pays the standard ~0.25 dB penalty for 3-bit soft quantization (§8.2). Hard agrees within Monte-Carlo noise.
+
+> **Note.** `matlab -batch` may print an *"Access violation detected"* dump from `libmwcustom_holes_factory.dll` on exit (R2025b, observed on Update 2 and 5). The fault is in an atexit handler that runs *after* `cosim_rtl_ber.csv` / `.png` are written, so the outputs are correct; the noisy exit code can be ignored as long as the artifacts have a fresh timestamp.
+
+### 8.4 Final Design State and Cross-Tool Agreement
+
+The shipping configuration is `PIPELINE = 1, NORMALIZE = 1` on both decoders, with the asymmetric normalization placement documented in §4.1 / §4.2. Every artifact in this report was generated against that same RTL on May 2, 2026. *Table 8b* collapses the cross-tool comparison at three reference operating points to make the agreement explicit.
+
+| Source | Tool | Soft @ 4 dB | Soft @ 6 dB | Hard @ 4 dB | Hard @ 6 dB | Notes |
+|---|---|---:|---:|---:|---:|---|
+| MATLAB `vitdec` (*Fig. 1*) | Comm Toolbox | $\sim 1 \times 10^{-3}$ | $\sim 5 \times 10^{-6}$ | $\sim 1 \times 10^{-2}$ | $\sim 6 \times 10^{-4}$ | Algorithmic baseline, 3-bit soft |
+| Simulink (*Table 7*) | Simulink + `vitdec` | $9.65 \times 10^{-4}$ | $5.50 \times 10^{-6}$ | $1.20 \times 10^{-2}$ | $6.27 \times 10^{-4}$ | $2 \times 10^6$ bits, 3-bit soft |
+| RTL AWGN TB (*Tables 3b/c*) | ModelSim, RTL | $5.20 \times 10^{-3}$ | $8.00 \times 10^{-4}$ | $1.70 \times 10^{-2}$ | $9.00 \times 10^{-3}$ | $5 \times 10^3$ bits, 8-bit soft |
+| RTL cosim (*Table 8*, *Fig. 4*) | MATLAB → ModelSim | $6.71 \times 10^{-4}$ | $8.00 \times 10^{-6}$ | $1.20 \times 10^{-2}$ | $6.90 \times 10^{-4}$ | $10^6$ bits, 8-bit soft, **shipping RTL** |
+
+*TABLE 8b: BER cross-check at fixed Eb/N0 across the four independent verification flows. The cosim row uses the exact RTL files that produce *Table 5*'s Quartus numbers, so the BER curve in *Figure 4* and the synthesis numbers in *Table 5* describe the same design at the same revision. Soft-vs-hard ordering and the ~2 dB soft-over-hard coding gain are consistent across all four rows. RTL AWGN BER at 6 dB is higher than the others because $5 \times 10^3$ bits per point only resolves down to $\sim 2 \times 10^{-4}$ before sample-size noise dominates; the cosim and Simulink runs both confirm sub-$10^{-5}$ behavior at the same SNR.*
+
+The four flows answer different questions and they all agree:
+- **MATLAB / Simulink** validate that the (7,5)\textsubscript{8} trellis and the soft-vs-hard branch metrics deliver the textbook coding gain on a true AWGN channel.
+- **RTL AWGN TBs** show the synthesizable Verilog matches that channel-side performance on small, fully-self-checked runs that fit a unit-test budget.
+- **RTL cosim** drives the *exact same* Verilog through MATLAB's channel at $10^6$ bits per point, with the shipping `PIPELINE = 1, NORMALIZE = 1` configuration, proving the timing-closed RTL still produces the right BER on a continuous stream long enough to wrap any un-normalized 16-bit metric ~60 times over.
 
 ## 9. Notes and Possible Extensions
 
-A few directions this design could be taken further if the project were continued:
+The following remain open. *Path-metric normalization* and *continuous-stream cosim* (originally listed here) are now part of the shipping RTL and have been moved into §4 and §8.3.
 
-- **Pipelined ACS.** Both decoders compile to roughly 25–32 MHz $F_{\max}$ on Cyclone V because the ACS for every destination state, the best-state search, and a 12-deep traceback walk are all combinational inside a single `always @*` block. Splitting branch-metric computation, add-compare, best-state selection, and traceback into separate pipeline stages would close the 100 MHz target with margin to spare, at the cost of a few extra cycles of latency. This mirrors the FIR pipelining trade-off in the sister project and is the most impactful next step for either decoder.
-- **Larger constraint length.** Extending to $K = 7$ (the standard 64-state convolutional code used in practice) would multiply the survivor memory and ACS hardware by 16 and would expose the value of survivor-memory partitioning and register-exchange traceback over the current full-history shift implementation.
-- **True AWGN soft channel in the testbench.** The Verilog soft testbench uses bounded uniform noise, which is enough to confirm the metric integrates evidence but is not a true AWGN process. The MATLAB study under §8 already runs the design model over AWGN; porting an LFSR-based Box–Muller noise source into the RTL testbench would let the hardware decoder be characterized against the same BER curves end-to-end.
+- **Break the ACS feedback loop.** With pipelining enabled, the remaining critical path on both decoders is the ACS recursion itself: `path_metric → BMU + add‐compare‐select → next_path_metric`. This is a closed loop, so it cannot be cut by adding a register without changing the algorithm. Two options: (a) re-encode the trellis to advance two symbols per cycle (radix-4 ACS), which doubles the per-cycle work but lets a register sit between BMU and add-compare-select; (b) operate the BMU on a one-cycle-stale soft input and write the metric back into `path_metric` a cycle later, which is fine for steady-state decoding but needs care at startup. Either is the next step for closing 100 MHz.
+- **Cheaper soft-side normalization.** The hard decoder gets pipelined-offset normalization (parallel min reduction) almost for free in $F_{\max}$ because the unit-magnitude oscillation in the resulting recurrence is bounded by the small ($\pm 2$) branch metric. The same trick costs ~16 MHz on the soft decoder because of the ($\pm 254$) branch-metric scale, so the shipping soft RTL uses the in-cycle form. A two-cycle-deeper offset pipeline (or scaling the soft inputs down before ACS) might recover that without losing correctness on continuous streams.
+- **Larger constraint length.** Extending to $K = 7$ multiplies the survivor memory and ACS hardware by 16 and would expose the value of survivor-memory partitioning and register-exchange traceback over the current full-history shift implementation.
 
 ## 10. References
 

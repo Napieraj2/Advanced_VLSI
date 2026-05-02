@@ -50,3 +50,66 @@ operating point defaults to `EbN0_dB = 4`; change it in the base workspace and
 re-run for a different point.
 
 Requires Simulink, Communications Toolbox, and DSP System Toolbox.
+
+## Cross-checking against the pipelined Verilog RTL
+
+By default the model uses the Communications Toolbox `Viterbi Decoder` block
+as a *reference* and does **not** exercise the pipelined RTL in
+[`../verilog/`](../verilog/). To add HDL Cosimulation branches that drive
+[`viterbi_hard_decoder.v`](../verilog/viterbi_hard_decoder.v) and
+[`viterbi_soft_decoder.v`](../verilog/viterbi_soft_decoder.v) alongside the
+toolbox decoders, rebuild with:
+
+```matlab
+build_viterbi_simulink_model('IncludeHDLCosim', true)
+```
+
+This adds two extra branches to the `.slx`:
+
+```
+                                           ┌─► Viterbi (toolbox, hard) ─► BER_hard
+AWGN ─► BPSK Demod ─► Buffer(2) ─► (rx0,rx1)┤
+                                           └─► HDL Cosim: viterbi_hard_decoder.v ─► BER_hard_rtl
+
+                                           ┌─► Viterbi (toolbox, soft) ─► BER_soft
+AWGN ─► Quantizer  ─► Buffer(2) ─► int8(±127)─►(soft0,soft1)┤
+                                           └─► HDL Cosim: viterbi_soft_decoder.v ─► BER_soft_rtl
+```
+
+Two `.do` scripts are emitted next to the `.slx`:
+
+| Script           | Purpose                                                             |
+|------------------|---------------------------------------------------------------------|
+| `cosim_hard.do`  | `vlog` the hard decoder, start ModelSim/Questa with cosim hooks.    |
+| `cosim_soft.do`  | Same for the soft decoder.                                          |
+
+Workflow:
+
+```bash
+# Terminal A - launch the simulator first
+vsim -do cosim_hard.do          # or cosim_soft.do (one session per branch)
+```
+
+```matlab
+% MATLAB - bind the HDL Cosim block to the running simulator session
+% (open the block dialog once, set Connection = Socket, click 'Generate
+%  connection' or run cosimWizard).  HDL Verifier dialog parameter names
+% drift between releases so this step is left manual on purpose.
+sim('Viterbi_Simulink_Model')
+disp(BER_hard); disp(BER_hard_rtl)
+disp(BER_soft); disp(BER_soft_rtl)
+```
+
+The toolbox and RTL BER readouts should match within Monte-Carlo noise; any
+systematic offset usually points at a port-mapping mismatch in the HDL Cosim
+block dialog (input order is `in_valid, rx0/soft0, rx1/soft1`, outputs are
+`decoded_valid, decoded_bit`) or at the soft-bit centering convention
+(`int8 ±127`, zero-mean) on the soft branch.
+
+Requires HDL Verifier in addition to the toolboxes listed above, plus a
+supported HDL simulator (ModelSim/Questa). The same Verilog files are also
+exercised standalone by the AWGN testbenches
+[`../verilog/tb_viterbi_hard_decoder_awgn.v`](../verilog/tb_viterbi_hard_decoder_awgn.v)
+and
+[`../verilog/tb_viterbi_soft_decoder_awgn.v`](../verilog/tb_viterbi_soft_decoder_awgn.v),
+which produce a comparable BER sweep without needing HDL Verifier.

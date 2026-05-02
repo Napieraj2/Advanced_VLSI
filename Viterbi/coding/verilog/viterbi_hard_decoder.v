@@ -5,7 +5,18 @@ module viterbi_hard_decoder #(
     parameter METRIC_W = 16,
     // PIPELINE = 0 -> baseline (bit-exact original behavior)
     // PIPELINE = 1 -> insert one input-side register stage (+1 cycle latency)
-    parameter PIPELINE = 1
+    parameter PIPELINE  = 1,
+    // NORMALIZE = 0 -> baseline (no path-metric normalization)
+    // NORMALIZE = 1 -> after each ACS step, subtract the minimum reachable
+    //                  path metric from every reachable state.  Argmax is
+    //                  preserved (a constant offset cancels in every
+    //                  pairwise compare), so decoded output is unchanged,
+    //                  but the registered path metrics no longer drift
+    //                  with symbol count.  Per-symbol BM is bounded to
+    //                  {-2,0,+2}, but accumulated path metrics still grow
+    //                  unboundedly and wrap the signed 16-bit range after
+    //                  ~16k symbols on continuous streams.
+    parameter NORMALIZE = 1
 ) (
     input                      clk,
     input                      rst_n,
@@ -47,6 +58,9 @@ module viterbi_hard_decoder #(
     reg signed [METRIC_W-1:0] cand_metric;
     reg [STATE_W-1:0] tb_state;
     reg [TB_DEPTH-1:0] tb_bits;
+    reg signed [METRIC_W-1:0] min_metric;
+    reg signed [METRIC_W-1:0] min_offset_next;
+    reg signed [METRIC_W-1:0] min_offset_q;
 
     integer s;
     integer d;
@@ -122,6 +136,8 @@ module viterbi_hard_decoder #(
         best_metric   = METRIC_MIN;
         tb_state      = {STATE_W{1'b0}};
         tb_bits       = {TB_DEPTH{1'b0}};
+        min_metric    = METRIC_MIN;
+        min_offset_next = {METRIC_W{1'b0}};
         b             = 0;
         for (s = 0; s < NUM_STATES; s = s + 1) begin
             best_prev[s] = {STATE_W{1'b0}};
@@ -181,6 +197,23 @@ module viterbi_hard_decoder #(
                 next_survivor_bit[0][s]  = best_bit[s];
             end
 
+            // ============================================================
+            // === NORMALIZE (apply): subtract last cycle's registered min
+            // The min reduction runs in parallel with ACS (see the block
+            // outside this if), and its result is registered into
+            // min_offset_q.  Subtracting the same constant from every
+            // reachable state preserves argmax exactly, so decoded
+            // output is bit-exact to NORMALIZE=0 on short runs.
+            // ============================================================
+            if (NORMALIZE != 0) begin
+                for (s = 0; s < NUM_STATES; s = s + 1) begin
+                    if (next_path_metric[s] != METRIC_MIN) begin
+                        next_path_metric[s] = next_path_metric[s] - min_offset_q;
+                    end
+                end
+            end
+            // ============================================================
+
             best_state  = 0;
             best_metric = next_path_metric[0];
             for (s = 1; s < NUM_STATES; s = s + 1) begin
@@ -205,6 +238,32 @@ module viterbi_hard_decoder #(
                 next_sym_count = sym_count + 1'b1;
             end
         end
+
+        // ================================================================
+        // === NORMALIZE (compute): parallel min over registered metrics ==
+        // Runs every cycle on the *registered* path_metric[] values, so
+        // its 4-way reduction is NOT in series with the ACS comparator.
+        // Result is captured into min_offset_q on the next clock edge
+        // and consumed by the subtract block above on the cycle after
+        // that, giving a one-cycle-delayed offset.  Drift is bounded
+        // by per-symbol branch metric range (a few units), well inside
+        // the 16-bit signed headroom.
+        // ================================================================
+        if (NORMALIZE != 0) begin
+            min_metric = METRIC_MIN;
+            for (s = 0; s < NUM_STATES; s = s + 1) begin
+                if (path_metric[s] != METRIC_MIN) begin
+                    if (min_metric == METRIC_MIN ||
+                        path_metric[s] < min_metric) begin
+                        min_metric = path_metric[s];
+                    end
+                end
+            end
+            if (min_metric != METRIC_MIN) begin
+                min_offset_next = min_metric;
+            end
+        end
+        // ================================================================
     end
 
     always @(posedge clk or negedge rst_n) begin
@@ -227,10 +286,12 @@ module viterbi_hard_decoder #(
             sym_count     <= 0;
             decoded_valid <= 1'b0;
             decoded_bit   <= 1'b0;
+            min_offset_q  <= {METRIC_W{1'b0}};
         end else begin
             for (s = 0; s < NUM_STATES; s = s + 1) begin
                 path_metric[s] <= next_path_metric[s];
             end
+            min_offset_q <= min_offset_next;
             for (d = 0; d < TB_DEPTH; d = d + 1) begin
                 for (s = 0; s < NUM_STATES; s = s + 1) begin
                     survivor_prev[d][s] <= next_survivor_prev[d][s];

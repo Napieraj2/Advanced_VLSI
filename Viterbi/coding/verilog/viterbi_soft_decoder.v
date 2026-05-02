@@ -14,7 +14,30 @@ module viterbi_soft_decoder #(
     //                      long traceback mux chain out of the ACS
     //                      combinational cone (the actual critical path on
     //                      Cyclone V).  Adds +2 cycles of decode latency.
-    parameter PIPELINE = 1
+    parameter PIPELINE  = 1,
+    // NORMALIZE = 0 -> baseline (no path-metric normalization).
+    // NORMALIZE = 1 -> in-cycle subtract-the-minimum normalization.  After
+    //                  each ACS step, the minimum reachable next_path_metric
+    //                  is subtracted from every reachable state.  Argmax
+    //                  is preserved (constant subtract across all reachable
+    //                  states) so decoded output is bit-exact identical to
+    //                  NORMALIZE=0 on short runs, but on continuous streams
+    //                  the registered path_metric stays bounded near zero,
+    //                  preventing 16-bit signed wrap.  States pinned at
+    //                  METRIC_MIN are excluded from the reduction and the
+    //                  subtract so the cold-start sentinel keeps working.
+    //                  Note: the soft decoder cannot use the lower-Fmax-cost
+    //                  one-cycle-delayed pipelined offset that the hard
+    //                  decoder uses (see viterbi_hard_decoder.v) because the
+    //                  characteristic polynomial of the resulting recurrence
+    //                  has unit-magnitude roots and noise of order 2*SOFT_W
+    //                  drives a random-walk oscillation that wraps the
+    //                  16-bit metric within ~100k-500k cycles.  The hard
+    //                  decoder's branch metric is small enough (|bm| <= 2)
+    //                  that the same oscillation stays within the 16-bit
+    //                  range for the full 1M-bit test, so the cheaper
+    //                  pipelined form is safe there.
+    parameter NORMALIZE = 1
 ) (
     input                           clk,
     input                           rst_n,
@@ -56,6 +79,7 @@ module viterbi_soft_decoder #(
     reg signed [METRIC_W-1:0] cand_metric;
     reg [STATE_W-1:0] tb_state;
     reg [TB_DEPTH-1:0] tb_bits;
+    reg signed [METRIC_W-1:0] min_metric;
 
     integer s;
     integer d;
@@ -129,6 +153,7 @@ module viterbi_soft_decoder #(
         best_metric   = METRIC_MIN;
         tb_state      = {STATE_W{1'b0}};
         tb_bits       = {TB_DEPTH{1'b0}};
+        min_metric    = METRIC_MIN;
         b             = 0;
         for (s = 0; s < NUM_STATES; s = s + 1) begin
             best_prev[s] = {STATE_W{1'b0}};
@@ -187,6 +212,43 @@ module viterbi_soft_decoder #(
                 next_survivor_prev[0][s] = best_prev[s];
                 next_survivor_bit[0][s]  = best_bit[s];
             end
+
+            // ============================================================
+            // === NORMALIZE: in-cycle subtract-the-minimum rescale =======
+            // After ACS, find the minimum reachable next_path_metric and
+            // subtract it from every reachable state.  Argmax is preserved
+            // (constant subtract across all reachable states), so decoded
+            // output is bit-exact identical to NORMALIZE=0 on short runs.
+            // Keeps the registered path_metric bounded near zero on
+            // continuous streams.  States pinned at METRIC_MIN are left
+            // alone so the cold-start sentinel keeps working.
+            //
+            // This min-reduce + subtract sits in series with the ACS
+            // comparator, which costs Fmax.  The hard decoder uses a
+            // cheaper pipelined offset (see viterbi_hard_decoder.v); the
+            // soft decoder cannot, because its larger branch metrics make
+            // the resulting recurrence's marginal-stability oscillation
+            // overflow 16-bit signed within ~100k-500k cycles.
+            // ============================================================
+            if (NORMALIZE != 0) begin
+                min_metric = METRIC_MIN;
+                for (s = 0; s < NUM_STATES; s = s + 1) begin
+                    if (next_path_metric[s] != METRIC_MIN) begin
+                        if (min_metric == METRIC_MIN ||
+                            next_path_metric[s] < min_metric) begin
+                            min_metric = next_path_metric[s];
+                        end
+                    end
+                end
+                if (min_metric != METRIC_MIN) begin
+                    for (s = 0; s < NUM_STATES; s = s + 1) begin
+                        if (next_path_metric[s] != METRIC_MIN) begin
+                            next_path_metric[s] = next_path_metric[s] - min_metric;
+                        end
+                    end
+                end
+            end
+            // ============================================================
 
             best_state  = 0;
             // PIPELINE: when PIPELINE!=0, retime the best-state search and
