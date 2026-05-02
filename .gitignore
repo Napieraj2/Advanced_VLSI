@@ -37,9 +37,4 @@ slprj/
 # Editor / source-control backups
 *.bak
 *.orig
-
-# VS Code: ignore personal settings, keep shared tasks/launch configs
-.vscode/*
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
+.vscode/
