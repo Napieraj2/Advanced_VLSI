@@ -23,7 +23,7 @@ The convolutional code under test is a rate-1/2, $K = 3$ encoder. *Table 1* list
 
 </div>
 
-<p align="center">*TABLE 1: Convolutional Code and Decoder Parameters*</p>
+<p align="center"><em>TABLE 1: Convolutional Code and Decoder Parameters</em></p>
 
 ### 1.2 Motivation
 The encoder side is not where this project spends its time. The point of the exercise is the decoder under two different channel models. Soft decoding gives the decoder a confidence value for each received symbol coordinate, and the branch metric becomes a signed sum. Hard decoding throws that confidence away and gives the decoder only a binary symbol, so the branch metric collapses to a Hamming distance. The same RTL handles both cases; the only thing that changes is the metric function, which is what makes the side-by-side comparison useful.
@@ -82,13 +82,13 @@ This is the only place the soft and hard decoders differ.
 #### Soft Decoder
 Soft inputs $r_0, r_1$ are signed values centered around zero, where positive values lean toward bit `1` and negative values lean toward bit `0`. For an expected coded pair $(e_1, e_0)$, the branch metric is the dot product in *Equation 3*. A correctly received symbol contributes a positive value; a wrong one contributes a negative value of equal magnitude. Higher path metric is better.
 
-$$BM_{\mathrm{soft}} = (2e_1 - 1) \cdot r_0 \;+\; (2e_0 - 1) \cdot r_1$$
+$$BM_{\mathrm{soft}} = (2e_1 - 1) \cdot r_0 + (2e_0 - 1) \cdot r_1$$
 (*Equation 3*)
 
 #### Hard Decoder
 Hard inputs collapse to single bits $\hat{r}_0, \hat{r}_1$. The branch metric is a $\{+1, -1\}$ agreement count, equivalent to negative Hamming distance, as shown in *Equation 4*. Same direction as the soft case: higher is better, and the rest of the ACS pipeline can stay identical.
 
-$$BM_{\mathrm{hard}} = (2e_1 - 1)(2\hat{r}_0 - 1) \;+\; (2e_0 - 1)(2\hat{r}_1 - 1)$$
+$$BM_{\mathrm{hard}} = (2e_1 - 1)(2\hat{r}_0 - 1) + (2e_0 - 1)(2\hat{r}_1 - 1)$$
 (*Equation 4*)
 
 ### 3.4 Add-Compare-Select
@@ -125,7 +125,7 @@ Both decoders are written as a single combinational `next_*` block plus a regist
 
 </div>
 
-<p align="center">*TABLE 2: Decoder RTL Section Map*</p>
+<p align="center"><em>TABLE 2: Decoder RTL Section Map</em></p>
 
 ### 4.1 Soft Decoder (`viterbi_soft_decoder.v`)
 The soft decoder is parameterized by `SOFT_W` (default 8) for the input width and `METRIC_W` (default 16) for the internal path metric. With `SOFT_W = 8`, soft inputs span $[-127, +127]$. The branch metric is bounded by $\pm 2 \cdot (2^{SOFT_W-1}-1)$ per symbol, so the 16-bit path metric does not reach `METRIC_MIN` over a 12-symbol traceback window. The decoded output appears one cycle after the ACS completes, with `decoded_valid` asserting once `sym_count` reaches `TB_DEPTH-1`.
@@ -160,7 +160,7 @@ The two decoders share the same RTL structure; the only thing that changes betwe
 
 </div>
 
-<p align="center">*TABLE 2b: Soft vs Hard — Architectural Differences*</p>
+<p align="center"><em>TABLE 2b: Soft vs Hard — Architectural Differences</em></p>
 
 The practical consequence is that the soft decoder is the wider design but the more regularly structured one: every branch metric is a signed sum of two signed terms, and the ACS adder tree is sized once for the worst-case soft input. The hard decoder is narrower per branch but exposes every constant to the synthesizer, which is what produces the slightly worse baseline $F_{\max}$ in §7 — the tool packs the small adders onto long carry chains that route poorly compared with the soft decoder's wider, more uniform datapath. Once pipelining is enabled the ranking flips back; see §7.2.
 
@@ -183,7 +183,7 @@ Both testbenches share the same structure, summarized in *Table 3*. The differen
 
 </div>
 
-<p align="center">*TABLE 3: Common Simulation Conditions*</p>
+<p align="center"><em>TABLE 3: Common Simulation Conditions</em></p>
 
 ### 5.1 Soft Channel Model
 Each encoded bit is mapped to a nominal soft level of $+48$ for `1` and $-48$ for `0`, then perturbed by a uniform integer noise sample on $[-6, +6]$ (centered by subtracting 6 from `|$random| % 13`). The result fits inside the 8-bit signed range and gives the soft decoder enough margin to reach zero bit errors per run. The noise model is intentionally simple and is not a true AWGN process; it confirms that the soft branch metric is integrating evidence rather than committing on individual symbols.
@@ -209,7 +209,7 @@ Because the existing decoder uses a 16-bit signed path metric without internal n
 
 </div>
 
-<p align="center">*TABLE 3b: AWGN BER Sweep — `tb_viterbi_soft_decoder_awgn.v` (PIPELINE = 1, NOM_LEVEL = 48, 50 × 100-bit trials per point). The 0–6 dB region tracks the soft-decoder shape from §8; at 7 dB and above the 5000-bit sample is too small to observe an error.*</p>
+<p align="center"><em>TABLE 3b: AWGN BER Sweep — `tb_viterbi_soft_decoder_awgn.v` (PIPELINE = 1, NOM_LEVEL = 48, 50 × 100-bit trials per point). The 0–6 dB region tracks the soft-decoder shape from §8; at 7 dB and above the 5000-bit sample is too small to observe an error.</em></p>
 
 Note that the Box-Muller block uses simulation-only system functions (`$ln`, `$sqrt`, `$cos`, `$sin`); the noise source is a verification model, not synthesizable RTL, so it stays inside the testbench.
 
@@ -235,7 +235,7 @@ A companion testbench drives `viterbi_hard_decoder` over the same Gaussian chann
 
 </div>
 
-<p align="center">*TABLE 3c: AWGN BER Sweep — `tb_viterbi_hard_decoder_awgn.v` (PIPELINE = 1, NOM_LEVEL = 48, 50 × 100-bit trials per point). At every Eb/N0 point the hard BER sits roughly an order of magnitude above the soft BER from Table 3b, matching the ~2 dB soft-vs-hard coding-gain gap predicted by the MATLAB sweep in §8.*</p>
+<p align="center"><em>TABLE 3c: AWGN BER Sweep — `tb_viterbi_hard_decoder_awgn.v` (PIPELINE = 1, NOM_LEVEL = 48, 50 × 100-bit trials per point). At every Eb/N0 point the hard BER sits roughly an order of magnitude above the soft BER from Table 3b, matching the ~2 dB soft-vs-hard coding-gain gap predicted by the MATLAB sweep in §8.</em></p>
 
 ### 5.3 Pass/Fail Reporting
 Both testbenches register decoded bits as they arrive against the original `tx_bits` array and increment `err_count` on every mismatch. After the drain phase, the testbench prints the number of bits checked, the error count, and either `PASS` or `FAIL`.
@@ -278,7 +278,7 @@ The two decoders were pushed through the same Cyclone V flow as the FIR sub-proj
 
 </div>
 
-<p align="center">*TABLE 4: Quartus Project Setup*</p>
+<p align="center"><em>TABLE 4: Quartus Project Setup</em></p>
 
 From the [quartus/](coding/verilog/quartus) folder, either revision can be compiled standalone:
 
@@ -316,7 +316,7 @@ The extra logic in either mode is fenced off in both decoders by clearly labeled
 
 </div>
 
-<p align="center">*TABLE 5: Synthesis Results on Cyclone V `5CGXFC9E7F35C8` — baseline (`PIPELINE = 0, NORMALIZE = 0`) vs shipping (`PIPELINE = 1, NORMALIZE = 1`). Soft uses in-cycle normalization (§4.1); hard uses pipelined-offset normalization (§4.2).*</p>
+<p align="center"><em>TABLE 5: Synthesis Results on Cyclone V `5CGXFC9E7F35C8` — baseline (`PIPELINE = 0, NORMALIZE = 0`) vs shipping (`PIPELINE = 1, NORMALIZE = 1`). Soft uses in-cycle normalization (§4.1); hard uses pipelined-offset normalization (§4.2).</em></p>
 
 The area increase comes almost entirely from `NORMALIZE = 1`. The soft decoder pays the most for it because its in-cycle form puts a 4-way 16-bit signed min reduction *and* per-state subtract in series with the ACS comparator, and Quartus expands the reduction into a wide LUT cone. The hard decoder pays roughly the same area cost for the pipelined-offset form (the min reduction itself isn't cheaper, just out of the critical path), but its $F_{\max}$ is essentially unchanged from baseline because that reduction now runs in parallel with ACS. An ACS-only intermediate fit (`PIPELINE = 1, NORMALIZE = 0`, not shown in *Table 5*) measured soft = 50.10 MHz and hard = 32.67 MHz, which bounds the cost of normalization at ~16 MHz on the soft decoder and effectively zero on the hard decoder.
 
@@ -345,9 +345,9 @@ sim('Viterbi_Simulink_Model'); disp(BER_soft); disp(BER_hard)
 
 The BER sweep is shown in *Figure 1*. The soft and hard curves match the prediction for this code: the soft decoder sits roughly 2 dB to the left of the hard decoder, and both sit well to the left of uncoded BPSK over the SNRs where the channel matters.
 
-<p align="center"><img src="Viterbi/coding/matlab/plots/ber_soft_vs_hard.png" alt="BER vs Eb/N0"></p>
+<p align="center"><img src="coding/matlab/plots/ber_soft_vs_hard.png" alt="BER vs Eb/N0"></p>
 
-<p align="center">*FIGURE 1: BER vs $E_b/N_0$ for rate-1/2, $K = 3$, $(7,5)_8$ Viterbi decoding over AWGN. Soft decoding (3-bit) gains roughly 2 dB over hard at $\mathrm{BER} = 10^{-4}$ and roughly 3 dB over uncoded BPSK.*</p>
+<p align="center"><em>FIGURE 1: BER vs $E_b/N_0$ for rate-1/2, $K = 3$, $(7,5)_8$ Viterbi decoding over AWGN. Soft decoding (3-bit) gains roughly 2 dB over hard at $\mathrm{BER} = 10^{-4}$ and roughly 3 dB over uncoded BPSK.</em></p>
 
 ### 8.1 Combined Tradeoff View
 
@@ -364,7 +364,7 @@ Layering the synthesis numbers from §7 onto the BER results gives the area/timi
 
 </div>
 
-<p align="center">*TABLE 6: Combined Hardware/Channel Tradeoff (baseline vs pipelined)*</p>
+<p align="center"><em>TABLE 6: Combined Hardware/Channel Tradeoff (baseline vs pipelined)</em></p>
 
 At baseline the soft decoder costs ~19 % more ALMs and ~10 % more registers than the hard decoder, and on this fit it also closes timing better (32.32 vs 23.64 MHz). It buys ~2 dB of additional coding gain at $\mathrm{BER} = 10^{-4}$, which is the 2 dB margin for soft over hard on this code. With pipelining enabled the soft decoder pulls further ahead: at +2 cycles of latency it reaches 50.1 MHz on 326 ALMs / 231 registers, making it both the fastest and the smallest design in the table. The hard decoder, with only an input-register cut available to it, lands at 32.7 MHz / 342 ALMs. Closing 100 MHz on either variant requires breaking the ACS recursion itself, which is listed under §9.
 
@@ -372,9 +372,9 @@ At baseline the soft decoder costs ~19 % more ALMs and ~10 % more registers than
 
 The Simulink companion model lives in [Viterbi/coding/simulink/](coding/simulink) and is rebuilt programmatically from [build_viterbi_simulink_model.m](coding/simulink/build_viterbi_simulink_model.m). It does not import the Verilog RTL — the Communications Toolbox `Viterbi Decoder` block is used as an independent reference for the same trellis (`poly2trellis(3,[7 5])`, `TB_DEPTH = 12`) so the BER results in §8 can be cross-validated against a second, fully independent implementation. The block diagram is shown in *Figure 2*.
 
-<p align="center"><img src="Viterbi/coding/simulink/plots/simulink_model.png" alt="Simulink Viterbi model"></p>
+<p align="center"><img src="coding/simulink/plots/simulink_model.png" alt="Simulink Viterbi model"></p>
 
-<p align="center">*FIGURE 2: Block diagram of `Viterbi_Simulink_Model.slx`. A common transmit chain (`BitSrc → ConvEnc → BPSK_Mod → AWGN`) drives two parallel decoder branches. The hard branch slices the channel sample with `BPSK_Demod_Hard` and feeds the toolbox Viterbi Decoder in `'Hard'` mode. The soft branch takes the real part of the channel sample and runs it through a primitive `Bias → Gain → Saturation → uint8` chain that produces a 3-bit-equivalent soft index for the toolbox Viterbi Decoder in `'Soft'` mode (the `double` cast at the output is only there so the BER block accepts it). The two `z⁻¹²` Tx delays match the toolbox decoder's traceback latency so the BER `Tx`/`Rx` ports stay aligned.*</p>
+<p align="center"><em>FIGURE 2: Block diagram of `Viterbi_Simulink_Model.slx`. A common transmit chain (`BitSrc → ConvEnc → BPSK_Mod → AWGN`) drives two parallel decoder branches. The hard branch slices the channel sample with `BPSK_Demod_Hard` and feeds the toolbox Viterbi Decoder in `'Hard'` mode. The soft branch takes the real part of the channel sample and runs it through a primitive `Bias → Gain → Saturation → uint8` chain that produces a 3-bit-equivalent soft index for the toolbox Viterbi Decoder in `'Soft'` mode (the `double` cast at the output is only there so the BER block accepts it). The two `z⁻¹²` Tx delays match the toolbox decoder's traceback latency so the BER `Tx`/`Rx` ports stay aligned.</em></p>
 
 The AWGN block is configured in `Variance` mode with `Variance = 1/(R·10^(EbN0_dB/10))`, which is the *total* complex-noise variance. Because the BPSK modulator output is complex and the demod chain takes only the real part, the effective real-axis noise variance is `Variance/2 = N0/2`, which is the one-sided AWGN convention used in *Figure 1* and in the RTL AWGN testbenches in §5.1.1 / §5.2.1. The same `EbN0_dB` workspace variable that drives the MATLAB sweep also drives the Simulink sweep. *Table 7* lists the BER produced by [run_simulink_ber_sweep.m](coding/simulink/run_simulink_ber_sweep.m) over a 0.5 dB grid with $2 \times 10^6$ data bits per point.
 
@@ -402,13 +402,13 @@ The AWGN block is configured in `Variance` mode with `Variance = 1/(R·10^(EbN0_
 
 </div>
 
-<p align="center">*TABLE 7: Simulink BER sweep — `Viterbi_Simulink_Model.slx`, $2 \times 10^6$ data bits per point. Soft crosses $\mathrm{BER} = 10^{-4}$ at $\sim 5.0$ dB and hard at $\sim 7.0$ dB, matching the MATLAB sweep in *Figure 1* and the RTL AWGN testbenches in *Tables 3b/3c* on the same ~2 dB soft-over-hard coding-gain margin.*</p>
+<p align="center"><em>TABLE 7: Simulink BER sweep — `Viterbi_Simulink_Model.slx`, $2 \times 10^6$ data bits per point. Soft crosses $\mathrm{BER} = 10^{-4}$ at $\sim 5.0$ dB and hard at $\sim 7.0$ dB, matching the MATLAB sweep in Figure 1 and the RTL AWGN testbenches in Tables 3b/3c on the same ~2 dB soft-over-hard coding-gain margin.</em></p>
 
 The BER curve is plotted in *Figure 3*.
 
-<p align="center"><img src="Viterbi/coding/simulink/plots/simulink_ber_sweep.png" alt="Simulink BER vs Eb/N0"></p>
+<p align="center"><img src="coding/simulink/plots/simulink_ber_sweep.png" alt="Simulink BER vs Eb/N0"></p>
 
-<p align="center">*FIGURE 3: Simulink BER vs $E_b/N_0$ from `run_simulink_ber_sweep.m`. The same soft-vs-hard ordering and ~2 dB gap as *Figure 1* and *Tables 3b/3c*, generated from a completely independent block-diagram model — the two RTL testbenches, the MATLAB `vitdec` script, and the Simulink toolbox decoder all agree on the channel-side performance of the (7,5)_8 code, with soft crossing $\mathrm{BER} = 10^{-4}$ at $\sim 5$ dB and hard at $\sim 7$ dB.*</p>
+<p align="center"><em>FIGURE 3: Simulink BER vs $E_b/N_0$ from `run_simulink_ber_sweep.m`. The same soft-vs-hard ordering and ~2 dB gap as Figure 1 and Tables 3b/3c, generated from a completely independent block-diagram model — the two RTL testbenches, the MATLAB `vitdec` script, and the Simulink toolbox decoder all agree on the channel-side performance of the (7,5)_8 code, with soft crossing $\mathrm{BER} = 10^{-4}$ at $\sim 5$ dB and hard at $\sim 7$ dB.</em></p>
 
 The model has an optional `IncludeHDLCosim` flag in [build_viterbi_simulink_model.m](coding/simulink/build_viterbi_simulink_model.m) that adds two HDL Cosimulation branches alongside the toolbox decoders so the RTL `viterbi_soft_decoder.v` / `viterbi_hard_decoder.v` can be co-simulated in-place against the same channel. That path is off by default because it requires a ModelSim/Questa license configured for HDL Verifier; the toolbox-only branches above are sufficient for the BER cross-check.
 
@@ -441,13 +441,13 @@ Because both decoders now have `NORMALIZE = 1` enabled — in-cycle subtract for
 
 </div>
 
-<p align="center">*TABLE 8: RTL cosim BER sweep — pipelined `viterbi_soft_decoder.v` / `viterbi_hard_decoder.v` driven via file-based stimulus, $10^6$ data bits per point, one continuous run per point. Soft crosses $\mathrm{BER} = 10^{-4}$ near 5 dB and hard near 7 dB.*</p>
+<p align="center"><em>TABLE 8: RTL cosim BER sweep — pipelined `viterbi_soft_decoder.v` / `viterbi_hard_decoder.v` driven via file-based stimulus, $10^6$ data bits per point, one continuous run per point. Soft crosses $\mathrm{BER} = 10^{-4}$ near 5 dB and hard near 7 dB.</em></p>
 
 The BER curve is plotted in *Figure 4*.
 
-<p align="center"><img src="Viterbi/coding/simulink/plots/cosim_rtl_ber.png" alt="RTL cosim BER vs Eb/N0"></p>
+<p align="center"><img src="coding/simulink/plots/cosim_rtl_ber.png" alt="RTL cosim BER vs Eb/N0"></p>
 
-<p align="center">*FIGURE 4: RTL cosim BER from `cosim_rtl_ber_sweep.m` driving the shipping RTL (`PIPELINE = 1, NORMALIZE = 1`, *Table 5*) through ModelSim, $10^6$ bits per point, one continuous run per point. Curves track *Figures 1* and *3* within Monte-Carlo tolerance over the full 0–8 dB sweep — the larger sample size makes the high-SNR tail visible all the way to BER $\sim 10^{-6}$ on the soft side and $\sim 10^{-5}$ on the hard side.*</p>
+<p align="center"><em>FIGURE 4: RTL cosim BER from `cosim_rtl_ber_sweep.m` driving the shipping RTL (`PIPELINE = 1, NORMALIZE = 1`, Table 5) through ModelSim, $10^6$ bits per point, one continuous run per point. Curves track Figures 1 and 3 within Monte-Carlo tolerance over the full 0–8 dB sweep — the larger sample size makes the high-SNR tail visible all the way to BER $\sim 10^{-6}$ on the soft side and $\sim 10^{-5}$ on the hard side.</em></p>
 
 The RTL soft curve sits a fraction of a dB *left* of the toolbox curve in *Figure 3* because the RTL takes signed 8-bit soft samples directly while the Simulink branch pays the standard ~0.25 dB penalty for 3-bit soft quantization (§8.2). Hard agrees within Monte-Carlo noise.
 
@@ -468,7 +468,7 @@ The shipping configuration is `PIPELINE = 1, NORMALIZE = 1` on both decoders, wi
 
 </div>
 
-<p align="center">*TABLE 8b: BER cross-check at fixed Eb/N0 across the four independent verification flows. The cosim row uses the exact RTL files that produce *Table 5*'s Quartus numbers, so the BER curve in *Figure 4* and the synthesis numbers in *Table 5* describe the same design at the same revision. Soft-vs-hard ordering and the ~2 dB soft-over-hard coding gain are consistent across all four rows. RTL AWGN BER at 6 dB is higher than the others because $5 \times 10^3$ bits per point only resolves down to $\sim 2 \times 10^{-4}$ before sample-size noise dominates; the cosim and Simulink runs both confirm sub-$10^{-5}$ behavior at the same SNR.*</p>
+<p align="center"><em>TABLE 8b: BER cross-check at fixed Eb/N0 across the four independent verification flows. The cosim row uses the exact RTL files that produce Table 5's Quartus numbers, so the BER curve in Figure 4 and the synthesis numbers in Table 5 describe the same design at the same revision. Soft-vs-hard ordering and the ~2 dB soft-over-hard coding gain are consistent across all four rows. RTL AWGN BER at 6 dB is higher than the others because $5 \times 10^3$ bits per point only resolves down to $\sim 2 \times 10^{-4}$ before sample-size noise dominates; the cosim and Simulink runs both confirm sub-$10^{-5}$ behavior at the same SNR.</em></p>
 
 The four flows answer different questions and they all agree:
 - **MATLAB / Simulink** validate that the (7,5)\textsubscript{8} trellis and the soft-vs-hard branch metrics deliver the textbook coding gain on a true AWGN channel.
