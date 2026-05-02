@@ -1,0 +1,6 @@
+QUARTUS_VERSION = "25.1"
+DATE = "16:35:00  May 01, 2026"
+
+# Revisions
+
+PROJECT_REVISION = "viterbi_soft"

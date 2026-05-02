@@ -1,0 +1,17 @@
+# Quartus build artifacts
+db/
+incremental_db/
+output_files/
+simulation/
+*.qws
+*.rpt
+*.summary
+*.smsg
+*.qmsg
+*.pin
+*.sof
+*.pof
+*.jdi
+*.done
+*.qsmsg
+*.qws.lock
